@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  font-family: "Pretendard", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-200;
+}
