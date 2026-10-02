@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Engine, Entry, OpenedProject, ProjectFile, ProjectOptions, SavedEntry, Status } from "../types";
+import type { Engine, Entry, GlossaryTerm, OpenedProject, ProjectFile, ProjectOptions, SavedEntry, Status } from "../types";
 
 interface ProjectInfo {
   root: string;
@@ -18,6 +18,8 @@ interface ProjectState {
   overrides: Record<string, Status>;
   /** 저장 파일에는 있지만 현재 게임 데이터에서 찾을 수 없는 항목. 잃어버리지 않도록 저장 시 그대로 유지 */
   orphans: Record<string, SavedEntry>;
+  /** 인명/고유명사 단어장 */
+  glossary: GlossaryTerm[];
   dirty: boolean;
 
   load: (p: OpenedProject) => void;
@@ -25,6 +27,7 @@ interface ProjectState {
   reloadEntries: (entries: Entry[], options: ProjectOptions) => void;
   setTranslations: (updates: Record<string, string>, opts?: { clearOverride?: boolean }) => void;
   setOverrides: (ids: string[], status: Status | null) => void;
+  setGlossary: (glossary: GlossaryTerm[]) => void;
   markSaved: () => void;
   toProjectFile: () => ProjectFile;
   /** 내보내기용: 원문과 다른 번역문 전체 */
@@ -59,6 +62,7 @@ export const useProject = create<ProjectState>((set, get) => ({
   translations: {},
   overrides: {},
   orphans: {},
+  glossary: [],
   dirty: false,
 
   load: (p) => {
@@ -66,6 +70,7 @@ export const useProject = create<ProjectState>((set, get) => ({
       project: { root: p.root, dataDir: p.dataDir, engine: p.engine },
       options: { ...DEFAULT_OPTIONS, ...p.saved?.options },
       ...distribute(p.entries, p.saved?.entries ?? {}),
+      glossary: p.saved?.glossary ?? [],
       dirty: false,
     });
   },
@@ -98,14 +103,16 @@ export const useProject = create<ProjectState>((set, get) => ({
     set({ overrides, dirty: true });
   },
 
+  setGlossary: (glossary) => set({ glossary, dirty: true }),
+
   markSaved: () => set({ dirty: false }),
 
   toProjectFile: () => {
-    const { translations, overrides, orphans, options } = get();
+    const { translations, overrides, orphans, options, glossary } = get();
     const entries: Record<string, SavedEntry> = { ...orphans };
     for (const [id, translation] of Object.entries(translations)) entries[id] = { translation };
     for (const [id, status] of Object.entries(overrides)) entries[id] = { ...entries[id], status };
-    return { version: 1, entries, options };
+    return { version: 1, entries, options, glossary };
   },
 
   exportMap: () => ({ ...get().translations }),

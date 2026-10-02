@@ -11,7 +11,9 @@ import { BulkEditDialog } from "./components/dialogs/BulkEditDialog";
 import { AiSettingsDialog } from "./components/dialogs/AiSettingsDialog";
 import { AiTranslateDialog } from "./components/dialogs/AiTranslateDialog";
 import { PluginWarningDialog } from "./components/dialogs/PluginWarningDialog";
+import { GlossaryDialog } from "./components/dialogs/GlossaryDialog";
 import { filterEntries } from "./lib/filter";
+import { useGlossaryMatcher } from "./lib/glossary";
 import { useFilter } from "./stores/filterStore";
 import { useProject } from "./stores/projectStore";
 import { useSelection } from "./stores/selectionStore";
@@ -20,14 +22,15 @@ import { isPluginKind } from "./types";
 export default function App() {
   const { project, entries, translations, overrides } = useProject();
   const filter = useFilter();
+  const glossary = useGlossaryMatcher();
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   const { result: filtered, error: filterError } = useMemo(
-    () => filterEntries(entries, translations, overrides, filter),
-    [entries, translations, overrides, filter],
+    () => filterEntries(entries, translations, overrides, filter, glossary),
+    [entries, translations, overrides, filter, glossary],
   );
 
   const handleOpen = useCallback(async () => {
@@ -154,6 +157,7 @@ export default function App() {
 
       {dialog === "saveAs" && project && <SaveAsDialog onClose={close} />}
       {dialog === "bulk" && <BulkEditDialog onClose={close} />}
+      {dialog === "glossary" && project && <GlossaryDialog onClose={close} />}
       {dialog === "aiSettings" && <AiSettingsDialog onClose={close} />}
       {dialog === "aiTranslate" && project && <AiTranslateDialog filtered={filtered} onClose={close} />}
       {dialog === "plugins" && project && (

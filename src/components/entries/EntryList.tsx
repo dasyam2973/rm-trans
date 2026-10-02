@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, type MouseEvent } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { useGlossaryMatcher } from "../../lib/glossary";
 import { statusOf, translationOf } from "../../lib/status";
 import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
@@ -27,6 +28,7 @@ export function EntryList({ filtered }: { filtered: Entry[] }) {
   const translations = useProject((s) => s.translations);
   const overrides = useProject((s) => s.overrides);
   const selected = useSelection((s) => s.selected);
+  const glossary = useGlossaryMatcher();
 
   const rows = useMemo(() => buildRows(filtered), [filtered]);
   const order = useRef<string[]>([]);
@@ -84,6 +86,7 @@ export function EntryList({ filtered }: { filtered: Entry[] }) {
                       status={statusOf(row.entry, translations, overrides)}
                       override={overrides[row.entry.id]}
                       selected={selected.has(row.entry.id)}
+                      glossary={glossary}
                       onSelect={onSelect}
                       onCommit={onCommit}
                       onOverride={onOverride}

@@ -53,7 +53,7 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
     try {
       const settings = await getAiSettings();
       const items = targets.map((e) => ({ id: e.id, text: e.original, group: e.group, context: e.context }));
-      setSummary(await aiTranslate(settings, items));
+      setSummary(await aiTranslate(settings, items, useProject.getState().glossary));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -148,6 +148,7 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
           <p>
             성공 <span className="text-emerald-400">{summary.translated}</span> · 실패{" "}
             <span className={summary.failed ? "text-rose-400" : ""}>{summary.failed}</span>
+            {summary.skipped > 0 && <> · 건너뜀 (제어 문자뿐) {summary.skipped}</>}
             {summary.cancelled && <span className="ml-2 text-amber-400">(중지됨)</span>}
           </p>
           {summary.errors.length > 0 && (

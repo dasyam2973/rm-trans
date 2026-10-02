@@ -131,6 +131,20 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             </Field>
           </div>
           <Field
+            label="제어 문자"
+            hint="제어 문자(\C[2], \N[1], %1 등)는 자리표시자로 바꿔 보내고, 응답을 받은 뒤 원래대로 되돌립니다. 없는 자리표시자가 들어간 번역은 항상 실패로 처리합니다."
+          >
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="accent-sky-500"
+                checked={s.requireCodes}
+                onChange={(e) => patch({ requireCodes: e.target.checked })}
+              />
+              제어 문자가 빠지거나 중복된 번역은 실패로 처리
+            </label>
+          </Field>
+          <Field
             label="시스템 프롬프트"
             hint="번역 방침을 자유롭게 적으세요. {{language}}는 대상 언어로 치환되고, 입출력 JSON 형식 지시는 자동으로 뒤에 붙습니다."
           >

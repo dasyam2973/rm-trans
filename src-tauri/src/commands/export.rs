@@ -21,14 +21,20 @@ pub struct ExportReport {
 
 /// 게임 폴더 전체를 dest로 복사한 뒤 번역문을 적용한다. 원본 폴더는 건드리지 않는다.
 /// `translations`: 아이템 ID("{file}#{pointer}") → 번역문 (원문과 다른 것만 보내면 된다)
+/// `translated_only`: true면 전체 복사 없이 번역이 실제로 적용된 파일만 같은 상대 경로로 dest에 쓴다.
 #[tauri::command]
-pub async fn export_project(root: String, dest: String, translations: HashMap<String, String>) -> Result<ExportReport> {
-    tauri::async_runtime::spawn_blocking(move || export(Path::new(&root), Path::new(&dest), translations))
+pub async fn export_project(
+    root: String,
+    dest: String,
+    translations: HashMap<String, String>,
+    translated_only: bool,
+) -> Result<ExportReport> {
+    tauri::async_runtime::spawn_blocking(move || export(Path::new(&root), Path::new(&dest), translations, translated_only))
         .await
         .expect("export_project 작업 패닉")
 }
 
-fn export(root: &Path, dest: &Path, translations: HashMap<String, String>) -> Result<ExportReport> {
+fn export(root: &Path, dest: &Path, translations: HashMap<String, String>, translated_only: bool) -> Result<ExportReport> {
     let root = root.canonicalize().map_err(|e| Error::io(root, e))?;
     if dest.exists() {
         let mut it = fs::read_dir(dest).map_err(|e| Error::io(dest, e))?;
@@ -43,7 +49,7 @@ fn export(root: &Path, dest: &Path, translations: HashMap<String, String>) -> Re
         return Err(Error::msg("원본 폴더 안에는 저장할 수 없습니다."));
     }
 
-    let files_copied = copy_tree(&root, &dest)?;
+    let files_copied = if translated_only { 0 } else { copy_tree(&root, &dest)? };
 
     // 파일별로 묶어서 한 번씩만 읽고 쓴다
     let mut by_file: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
@@ -57,10 +63,15 @@ fn export(root: &Path, dest: &Path, translations: HashMap<String, String>) -> Re
     for (file, patches) in by_file {
         // canonicalize된 Windows 경로(\\?\)는 '/'를 구분자로 인식하지 않으므로 구성 요소별로 붙인다
         let path = file.split('/').fold(dest.clone(), |p, part| p.join(part));
-        let src = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+        // 번역 파일만 내보낼 때는 복사본이 없으므로 원본에서 읽는다
+        let src_path = if translated_only { file.split('/').fold(root.clone(), |p, part| p.join(part)) } else { path.clone() };
+        let src = fs::read_to_string(&src_path).map_err(|e| Error::io(&src_path, e))?;
         let result = apply::patch_file(&file, &src, &patches).map_err(|msg| Error::Parse { path: file.clone(), msg })?;
         report.skipped.extend(result.skipped.into_iter().map(|p| format!("{file}#{p}")));
         if result.applied > 0 {
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+            }
             fs::write(&path, result.text).map_err(|e| Error::io(&path, e))?;
             report.files_patched += 1;
             report.strings_applied += result.applied;
@@ -133,7 +144,7 @@ mod tests {
             (id("ハロルド"), "해롤드".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations).unwrap();
+        let report = export(&game, &dest, translations, false).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
         assert!(!dest.join(WORK_DIR).exists());
@@ -173,7 +184,7 @@ mod tests {
             (id("回復"), "회복".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations).unwrap();
+        let report = export(&game, &dest, translations, false).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
 
@@ -181,6 +192,38 @@ mod tests {
         assert_eq!(out, plugins.replace("メニュー", "메뉴").replace("回復", "회복"));
         let out_ce = fs::read_to_string(dest.join("data/CommonEvents.json")).unwrap();
         assert!(out_ce.contains(r#"{"text":"어서 오세요","id":"5"}"#));
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn export_translated_only() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-only-{}", std::process::id()));
+        let game = base.join("game");
+        let data = game.join("www/data");
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(game.join("www/img")).unwrap();
+        fs::write(game.join("www/img/a.png"), "png").unwrap();
+        fs::write(data.join("System.json"), r#"{"gameTitle":"勇者"}"#).unwrap();
+        let actors = r#"[null,{"id":1,"name":"ハロルド","nickname":"","profile":""}]"#;
+        fs::write(data.join("Actors.json"), actors).unwrap();
+
+        let layout = detect::detect(&game).unwrap();
+        let entries = extract::extract_all(&layout, false).unwrap().entries;
+        let id = entries.iter().find(|e| e.original == "ハロルド").unwrap().id.clone();
+        let dest = base.join("out");
+        let report = export(&game, &dest, HashMap::from([(id, "해롤드".to_string())]), true).unwrap();
+        assert_eq!(report.files_copied, 0);
+        assert_eq!(report.files_patched, 1);
+        assert_eq!(report.strings_applied, 1);
+
+        // 번역된 파일만 같은 상대 경로로 생기고, 나머지는 복사되지 않는다
+        let out = fs::read_to_string(dest.join("www/data/Actors.json")).unwrap();
+        assert_eq!(out, actors.replace("ハロルド", "해롤드"));
+        assert!(!dest.join("www/data/System.json").exists());
+        assert!(!dest.join("www/img").exists());
+        // 원본은 그대로
+        assert_eq!(fs::read_to_string(data.join("Actors.json")).unwrap(), actors);
 
         fs::remove_dir_all(&base).ok();
     }

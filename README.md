@@ -1,7 +1,34 @@
-# Tauri + React + Typescript
+# RM Trans
+RPG Maker MV/MZ로 제작된 게임을 지원하는 번역 도우미 툴입니다.
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+게임 데이터에서 번역할 문장을 추출해 직접 편집하거나 AI로 번역하고, 번역이 적용된 사본을 내보낼 수 있습니다.
 
-## Recommended IDE Setup
+## 주요 기능
+- **MV/MZ 자동 인식**
+- **텍스트 추출**: 시스템 용어, 데이터베이스, 맵 이름, 이벤트 대사, 선택지 등을 추출합니다. 원하면 플러그인 데이터(`js/plugins.js`, 플러그인 커맨드)도 추출할 수 있습니다.
+- **AI 연동 번역**: OpenAI 호환 API를 지원한다면 어디든 연결할 수 있습니다. 대사를 그룹 단위로 일괄 번역합니다.
+- **내보내기**: 게임 폴더 전체를 복사해 번역을 적용하거나, 번역된 파일만 내보낼 수 있습니다.
+- **단어장**: 번역 시 인명, 고유명사 등 달라지면 안 되는 단어들을 쉽게 등록해 이용할 수 있습니다.
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 사용 방법
+1. **폴더 열기**로 게임 폴더를 엽니다.
+2. 목록에서 직접 번역하거나 **AI 설정**에서 API를 등록한 뒤 **AI 번역**을 실행합니다.
+3. **작업 저장**으로 진행 상황을 저장합니다.
+4. **다른 이름으로 저장**으로 번역된 게임을 새 폴더에 내보냅니다.
+
+## 주의사항
+- 원본 게임 폴더의 게임 파일은 수정하지 않습니다. 번역 결과는 항상 새 폴더로 내보냅니다.
+- 작업 내용은 `<게임 폴더>/.rmtrans/project.json`에 저장됩니다. 이 폴더는 내보낼 때 제외됩니다.
+- 플러그인 데이터를 잘못 번역하면 게임이 동작하지 않을 수 있습니다. 플러그인 데이터를 번역했다면 내보낸 뒤 꼭 게임을 실행해 확인하세요.
+
+## 개발 / 빌드
+필요한 것: [Node.js](https://nodejs.org/), [Rust](https://www.rust-lang.org/), [Tauri 2 Prerequisites](https://v2.tauri.app/start/prerequisites/)
+
+```sh
+npm install
+npm run tauri dev     # 개발 모드 실행
+npm run tauri build   # 릴리스 빌드
+```
+
+## AI Usage
+해당 프로젝트의 코드는 AI 에이전트의 도움을 받아 작성되었습니다.

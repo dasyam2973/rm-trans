@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
+use super::codes::{self, Masked};
+use super::glossary::Glossary;
 use super::{client, prompt, settings::AiSettings};
+use crate::store::GlossaryTerm;
 
 pub const EVENT_RESULT: &str = "ai://result";
 pub const EVENT_PROGRESS: &str = "ai://progress";
@@ -20,6 +23,14 @@ pub struct AiItem {
     pub text: String,
     pub group: String,
     pub context: Option<String>,
+}
+
+/// 제어 문자를 마스킹한 번역 대상
+pub struct Job {
+    pub id: String,
+    pub group: String,
+    pub context: Option<String>,
+    pub masked: Masked,
 }
 
 #[derive(Serialize, Clone)]
@@ -39,6 +50,8 @@ pub struct Progress {
 pub struct AiSummary {
     pub translated: usize,
     pub failed: usize,
+    /// 제어 문자 외에 번역할 텍스트가 없어 보내지 않은 항목 수
+    pub skipped: usize,
     pub errors: Vec<String>,
     pub cancelled: bool,
 }
@@ -69,9 +82,9 @@ impl AiState {
 }
 
 /// 같은 그룹(대사 블록 등)은 가능한 한 같은 배치에 넣는다.
-fn make_batches(items: Vec<AiItem>, size: usize) -> Vec<Vec<AiItem>> {
+fn make_batches(items: Vec<Job>, size: usize) -> Vec<Vec<Job>> {
     let size = size.max(1);
-    let mut groups: Vec<Vec<AiItem>> = Vec::new();
+    let mut groups: Vec<Vec<Job>> = Vec::new();
     for item in items {
         match groups.last_mut() {
             Some(g) if g[0].group == item.group => g.push(item),
@@ -80,7 +93,7 @@ fn make_batches(items: Vec<AiItem>, size: usize) -> Vec<Vec<AiItem>> {
     }
 
     let mut batches = Vec::new();
-    let mut cur: Vec<AiItem> = Vec::new();
+    let mut cur: Vec<Job> = Vec::new();
     for group in groups {
         if !cur.is_empty() && cur.len() + group.len() > size {
             batches.push(std::mem::take(&mut cur));
@@ -103,8 +116,15 @@ fn make_batches(items: Vec<AiItem>, size: usize) -> Vec<Vec<AiItem>> {
     batches
 }
 
-async fn translate_batch(http: &reqwest::Client, s: &AiSettings, system: &str, batch: &[AiItem]) -> Result<Vec<TranslatedItem>, String> {
-    let user = prompt::user_message(batch);
+/// 성공하면 (복원까지 마친 번역문, 제어 문자가 맞지 않아 버린 항목 수)
+async fn translate_batch(
+    http: &reqwest::Client,
+    s: &AiSettings,
+    system: &str,
+    glossary: &Glossary,
+    batch: &[Job],
+) -> Result<(Vec<TranslatedItem>, usize), String> {
+    let user = prompt::user_message(batch, glossary);
     let mut last_err = String::new();
     for attempt in 0..MAX_ATTEMPTS {
         if attempt > 0 {
@@ -121,33 +141,52 @@ async fn translate_batch(http: &reqwest::Client, s: &AiSettings, system: &str, b
             last_err = format!("응답을 JSON으로 해석할 수 없습니다: {}", content.chars().take(200).collect::<String>());
             continue;
         };
-        return Ok(batch
-            .iter()
-            .enumerate()
-            .filter_map(|(i, item)| map.get(&i).map(|t| TranslatedItem { id: item.id.clone(), text: t.clone() }))
-            .collect());
+        let mut translated = Vec::new();
+        let mut mismatched = 0;
+        for (i, job) in batch.iter().enumerate() {
+            let Some(text) = map.get(&i) else { continue };
+            match job.masked.unmask(text, s.require_codes) {
+                Some(text) => translated.push(TranslatedItem { id: job.id.clone(), text }),
+                None => mismatched += 1,
+            }
+        }
+        return Ok((translated, mismatched));
     }
     Err(last_err)
 }
 
-pub async fn run(app: &AppHandle, state: &AiState, settings: AiSettings, items: Vec<AiItem>) -> AiSummary {
+pub async fn run(
+    app: &AppHandle,
+    state: &AiState,
+    settings: AiSettings,
+    items: Vec<AiItem>,
+    glossary: Vec<GlossaryTerm>,
+) -> AiSummary {
+    let glossary = Glossary::new(glossary);
     let total = items.len();
     let system = prompt::system_prompt(&settings.system_prompt, &settings.target_language);
     let http = reqwest::Client::builder().timeout(Duration::from_secs(300)).build().expect("HTTP 클라이언트 생성");
-    let batches = make_batches(items, settings.batch_size);
+    let jobs: Vec<Job> = items
+        .into_iter()
+        .map(|item| Job { masked: codes::mask(&item.text), id: item.id, group: item.group, context: item.context })
+        .filter(|job| job.masked.has_text())
+        .collect();
+    let skipped = total - jobs.len();
+    let batches = make_batches(jobs, settings.batch_size);
 
-    let mut summary = AiSummary::default();
-    let mut done = 0;
+    let mut summary = AiSummary { skipped, ..Default::default() };
+    let mut mismatched = 0;
+    let mut done = skipped;
     let _ = app.emit(EVENT_PROGRESS, Progress { done, total });
 
     let mut results = stream::iter(batches)
         .map(|batch| {
-            let (http, settings, system) = (&http, &settings, &system);
+            let (http, settings, system, glossary) = (&http, &settings, &system, &glossary);
             async move {
                 if state.cancel.load(Ordering::Relaxed) {
                     return (batch.len(), None);
                 }
-                (batch.len(), Some(translate_batch(http, settings, system, &batch).await))
+                (batch.len(), Some(translate_batch(http, settings, system, glossary, &batch).await))
             }
         })
         .buffer_unordered(settings.concurrency.max(1));
@@ -165,9 +204,10 @@ pub async fn run(app: &AppHandle, state: &AiState, settings: AiSettings, items: 
         done += len;
         match result {
             None => summary.cancelled = true,
-            Some(Ok(translated)) => {
+            Some(Ok((translated, bad))) => {
                 summary.translated += translated.len();
                 summary.failed += len - translated.len();
+                mismatched += bad;
                 let _ = app.emit(EVENT_RESULT, translated);
             }
             Some(Err(e)) => {
@@ -177,6 +217,10 @@ pub async fn run(app: &AppHandle, state: &AiState, settings: AiSettings, items: 
         }
         let _ = app.emit(EVENT_PROGRESS, Progress { done, total });
     }
+    if mismatched > 0 {
+        let reason = if settings.require_codes { "빠졌거나 중복되었거나 잘못된" } else { "잘못된" };
+        summary.errors.push(format!("제어 문자 자리표시자가 {reason} 번역 {mismatched}개를 실패 처리했습니다."));
+    }
     summary
 }
 
@@ -184,8 +228,8 @@ pub async fn run(app: &AppHandle, state: &AiState, settings: AiSettings, items: 
 mod tests {
     use super::*;
 
-    fn item(group: &str) -> AiItem {
-        AiItem { id: String::new(), text: String::new(), group: group.into(), context: None }
+    fn item(group: &str) -> Job {
+        Job { id: String::new(), group: group.into(), context: None, masked: codes::mask("") }
     }
 
     #[test]
@@ -193,7 +237,7 @@ mod tests {
         let items = vec![item("a"), item("a"), item("b"), item("b"), item("b"), item("c")];
         let sizes: Vec<_> = make_batches(items, 4).iter().map(Vec::len).collect();
         assert_eq!(sizes, vec![2, 4]);
-        let items = vec![item("a"); 5];
+        let items = (0..5).map(|_| item("a")).collect();
         let sizes: Vec<_> = make_batches(items, 2).iter().map(Vec::len).collect();
         assert_eq!(sizes, vec![2, 2, 1]);
     }

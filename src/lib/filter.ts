@@ -1,4 +1,5 @@
 import type { Entry, Kind, Status } from "../types";
+import { glossaryIssues, type GlossaryMatcher } from "./glossary";
 import { statusOf, translationOf } from "./status";
 
 export type SearchScope = "both" | "original" | "translation";
@@ -14,6 +15,8 @@ export interface FilterOptions {
   files: string[];
   /** 비어 있으면 전체 종류 */
   kinds: Kind[];
+  /** 단어장 용어가 지정한 번역대로 번역되지 않은 항목만 */
+  glossaryIssues: boolean;
 }
 
 export type Matcher = { test: (s: string) => boolean; error?: undefined } | { test?: undefined; error: string };
@@ -37,6 +40,7 @@ export function filterEntries(
   translations: Record<string, string>,
   overrides: Record<string, Status>,
   opts: FilterOptions,
+  glossary: GlossaryMatcher,
 ): { result: Entry[]; error?: string } {
   const matcher = opts.query ? buildMatcher(opts.query, opts.regex, opts.caseSensitive) : null;
   if (matcher?.error) return { result: entries, error: matcher.error };
@@ -47,6 +51,8 @@ export function filterEntries(
     if (files && !files.has(e.file)) return false;
     if (kinds && !kinds.has(e.kind)) return false;
     if (opts.status !== "all" && statusOf(e, translations, overrides) !== opts.status) return false;
+    // 단어장이 비면 토글 버튼이 숨겨지므로 필터도 무시한다
+    if (opts.glossaryIssues && glossary.size > 0 && glossaryIssues(e, translations, glossary).length === 0) return false;
     if (matcher?.test) {
       const t = translationOf(e, translations);
       const hit =

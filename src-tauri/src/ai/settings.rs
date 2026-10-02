@@ -6,19 +6,10 @@ use tauri::{AppHandle, Manager};
 
 use crate::error::{Error, Result};
 
-/// 언어 지원 이전 버전의 기본 프롬프트 (한국어 고정). 저장된 값이 이것이면 새 기본값으로 교체한다.
-const LEGACY_SYSTEM_PROMPT: &str = "\
-You are a professional video game translator. Translate the given RPG game text into natural Korean.
-- Keep the tone and personality of each speaker.
-- Preserve RPG Maker control codes exactly as they appear (e.g. \\V[1], \\N[2], \\C[3], \\I[64], \\G, \\{, \\}, \\., \\|, \\!, \\>, \\<, \\^, \\\\).
-- Keep line breaks as they are.
-- Items in the same `group` are consecutive lines of the same message; translate them so they read naturally together.";
-
 /// `{{language}}`는 요청 시 대상 언어 이름으로 치환된다.
 pub const DEFAULT_SYSTEM_PROMPT: &str = "\
 You are a professional video game translator. Translate the given RPG game text into natural {{language}}.
 - Keep the tone and personality of each speaker.
-- Preserve RPG Maker control codes exactly as they appear (e.g. \\V[1], \\N[2], \\C[3], \\I[64], \\G, \\{, \\}, \\., \\|, \\!, \\>, \\<, \\^, \\\\).
 - Keep line breaks as they are.
 - Items in the same `group` are consecutive lines of the same message; translate them so they read naturally together.";
 
@@ -40,6 +31,8 @@ pub struct AiSettings {
     pub target_language: String,
     /// response_format 종류 (지원하지 않는 API도 있음)
     pub response_mode: ResponseMode,
+    /// 원문의 제어 문자가 빠지거나 중복된 번역을 실패로 처리할지
+    pub require_codes: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +59,7 @@ impl Default for AiSettings {
             concurrency: 2,
             target_language: "Korean".into(),
             response_mode: ResponseMode::default(),
+            require_codes: true,
         }
     }
 }
@@ -83,14 +77,11 @@ pub fn get_ai_settings(app: AppHandle) -> Result<AiSettings> {
     }
     let text = fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
     let mut settings: AiSettings = serde_json::from_str(&text).unwrap_or_default();
-    // 구버전 설정 마이그레이션: jsonMode(bool) → responseMode, 한국어 고정 프롬프트 → 언어 치환 프롬프트
+    // 구버전 설정 마이그레이션: jsonMode(bool) → responseMode
     if let Ok(raw) = serde_json::from_str::<serde_json::Value>(&text) {
         if raw.get("responseMode").is_none() && raw.get("jsonMode").and_then(|v| v.as_bool()) == Some(true) {
             settings.response_mode = ResponseMode::JsonObject;
         }
-    }
-    if settings.system_prompt.trim() == LEGACY_SYSTEM_PROMPT.trim() {
-        settings.system_prompt = DEFAULT_SYSTEM_PROMPT.into();
     }
     Ok(settings)
 }

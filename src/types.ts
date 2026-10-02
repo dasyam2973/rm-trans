@@ -42,10 +42,19 @@ export interface ProjectOptions {
   includePlugins: boolean;
 }
 
+/** 단어장 항목. 인명/고유명사 등을 일관되게 번역하도록 AI 요청에 함께 보낸다 */
+export interface GlossaryTerm {
+  source: string;
+  target: string;
+  /** 성별, 말투 등 참고 메모 (AI에도 전달) */
+  note?: string;
+}
+
 export interface ProjectFile {
   version: number;
   entries: Record<string, SavedEntry>;
   options?: ProjectOptions;
+  glossary?: GlossaryTerm[];
 }
 
 export type Engine = "mv" | "mz" | "unknown";
@@ -80,6 +89,8 @@ export interface AiSettings {
   concurrency: number;
   targetLanguage: string;
   responseMode: ResponseMode;
+  /** 원문의 제어 문자가 빠지거나 중복된 번역을 실패로 처리할지 */
+  requireCodes: boolean;
 }
 
 export type ResponseMode = "jsonObject" | "structured" | "none";
@@ -118,6 +129,8 @@ export interface AiItem {
 export interface AiSummary {
   translated: number;
   failed: number;
+  /** 제어 문자 외에 번역할 텍스트가 없어 보내지 않은 항목 수 */
+  skipped: number;
   errors: string[];
   cancelled: boolean;
 }

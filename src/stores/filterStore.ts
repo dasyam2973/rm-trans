@@ -15,6 +15,7 @@ const initial: FilterOptions = {
   status: "all",
   files: [],
   kinds: [],
+  glossaryIssues: false,
 };
 
 export const useFilter = create<FilterState>((set, get) => ({

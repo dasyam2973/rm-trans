@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { KIND_LABELS, type Entry, type Kind } from "../../types";
 import type { SearchScope, StatusFilter } from "../../lib/filter";
+import { glossaryIssues, useGlossaryMatcher } from "../../lib/glossary";
 import { useFilter } from "../../stores/filterStore";
 import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
@@ -14,6 +15,12 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
     const present = new Set(entries.map((e) => e.kind));
     return (Object.keys(KIND_LABELS) as Kind[]).filter((k) => present.has(k));
   }, [entries]);
+  const translations = useProject((s) => s.translations);
+  const glossary = useGlossaryMatcher();
+  const issueCount = useMemo(
+    () => (glossary.size ? entries.filter((e) => glossaryIssues(e, translations, glossary).length > 0).length : 0),
+    [entries, translations, glossary],
+  );
   const toggleKind = (k: Kind) =>
     f.set({ kinds: f.kinds.includes(k) ? f.kinds.filter((x) => x !== k) : [...f.kinds, k] });
 
@@ -58,6 +65,20 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
           </button>
         ))}
       </div>
+
+      {glossary.size > 0 && (
+        <button
+          onClick={() => f.set({ glossaryIssues: !f.glossaryIssues })}
+          title="번역된 항목 중 원문에 단어장 용어가 있는데 번역문에 지정한 번역이 없는 항목만 표시"
+          className={`rounded border px-2 py-1 text-sm ${
+            f.glossaryIssues
+              ? "border-amber-500 bg-amber-600/30 text-amber-100"
+              : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
+          }`}
+        >
+          단어장 불일치 {issueCount.toLocaleString()}
+        </button>
+      )}
 
       {presentKinds.length > 1 && (
         <div className="flex flex-wrap items-center gap-1" title="종류별 필터 (여러 개 선택 가능, 선택 없음 = 전체)">

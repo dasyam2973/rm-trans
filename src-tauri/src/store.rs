@@ -34,6 +34,16 @@ pub struct ProjectOptions {
     pub include_plugins: bool,
 }
 
+/// 단어장 항목. 인명/고유명사 등을 일관되게 번역하도록 AI 요청에 함께 보낸다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlossaryTerm {
+    pub source: String,
+    pub target: String,
+    /// 성별, 말투 등 참고 메모 (AI에도 전달)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFile {
     pub version: u32,
@@ -41,6 +51,8 @@ pub struct ProjectFile {
     pub entries: BTreeMap<String, SavedEntry>,
     #[serde(default)]
     pub options: ProjectOptions,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub glossary: Vec<GlossaryTerm>,
 }
 
 fn project_path(root: &Path) -> PathBuf {

@@ -2,7 +2,7 @@ import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
 import { Button } from "../ui";
 
-export type DialogKind = "saveAs" | "bulk" | "aiSettings" | "aiTranslate" | "plugins";
+export type DialogKind = "saveAs" | "bulk" | "glossary" | "aiSettings" | "aiTranslate" | "plugins";
 
 export function MenuBar({
   onOpen,
@@ -19,6 +19,7 @@ export function MenuBar({
   const dirty = useProject((s) => s.dirty);
   const includePlugins = useProject((s) => s.options.includePlugins);
   const selectedCount = useSelection((s) => s.selected.size);
+  const glossaryCount = useProject((s) => s.glossary.length);
   const loaded = project !== null;
 
   return (
@@ -53,6 +54,9 @@ export function MenuBar({
 
       <Button onClick={() => onDialog("bulk")} disabled={selectedCount === 0}>
         일괄 수정{selectedCount > 0 && ` (${selectedCount})`}
+      </Button>
+      <Button onClick={() => onDialog("glossary")} disabled={!loaded}>
+        단어장{glossaryCount > 0 && ` (${glossaryCount})`}
       </Button>
       <Button variant="primary" onClick={() => onDialog("aiTranslate")} disabled={!loaded}>
         AI 번역

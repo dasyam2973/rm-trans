@@ -6,11 +6,12 @@ import { useProject } from "../../stores/projectStore";
 import { isPluginKind, type ExportReport } from "../../types";
 import { Button, Dialog, Field, inputClass } from "../ui";
 
-/** 원본 게임 폴더를 통째로 복사한 뒤 번역문을 적용해 새 폴더로 저장한다. */
+/** 원본 게임 폴더를 통째로 복사한 뒤 번역문을 적용해 새 폴더로 저장한다. (옵션: 번역된 파일만) */
 export function SaveAsDialog({ onClose }: { onClose: () => void }) {
   const project = useProject((s) => s.project)!;
   const [parent, setParent] = useState("");
   const [name, setName] = useState("");
+  const [translatedOnly, setTranslatedOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ExportReport | null>(null);
@@ -39,7 +40,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const dest = await join(parent, name.trim());
-      setReport(await exportProject(project.root, dest, useProject.getState().exportMap()));
+      setReport(await exportProject(project.root, dest, useProject.getState().exportMap(), translatedOnly));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -60,7 +61,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
               취소
             </Button>
             <Button variant="primary" onClick={run} disabled={busy || !parent || !name.trim()}>
-              {busy ? "복사 중…" : "저장"}
+              {busy ? (translatedOnly ? "저장 중…" : "복사 중…") : "저장"}
             </Button>
           </>
         )
@@ -69,7 +70,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
       {report ? (
         <div className="space-y-1 text-sm">
           <p className="text-emerald-400">저장했습니다.</p>
-          <p>복사한 파일: {report.filesCopied.toLocaleString()}개</p>
+          {!translatedOnly && <p>복사한 파일: {report.filesCopied.toLocaleString()}개</p>}
           <p>
             번역 적용: {report.filesPatched}개 파일, {report.stringsApplied.toLocaleString()}개 문자열
           </p>
@@ -83,8 +84,20 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
       ) : (
         <>
           <p className="mb-3 text-sm text-zinc-400">
-            게임 폴더 전체를 새 폴더로 복사하고 번역문을 적용합니다. 원본 폴더는 바뀌지 않습니다.
+            {translatedOnly
+              ? "번역이 적용된 파일만 원래 폴더 구조 그대로 새 폴더에 저장합니다. 게임 폴더에 덮어씌워 사용하세요. 원본 폴더는 바뀌지 않습니다."
+              : "게임 폴더 전체를 새 폴더로 복사하고 번역문을 적용합니다. 원본 폴더는 바뀌지 않습니다."}
           </p>
+          <label className="mb-3 flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-sky-500"
+              checked={translatedOnly}
+              disabled={busy}
+              onChange={(e) => setTranslatedOnly(e.target.checked)}
+            />
+            번역된 파일만 내보내기
+          </label>
           {pluginCount > 0 && (
             <p className="mb-3 rounded border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
               ⚠ 플러그인 데이터 번역 {pluginCount.toLocaleString()}개가 적용됩니다. 저장한 뒤 게임을 실행해 정상적으로
