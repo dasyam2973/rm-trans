@@ -11,7 +11,12 @@ export type Kind =
   | "dialogue"
   | "scroll"
   | "choice"
-  | "displayName";
+  | "displayName"
+  | "pluginParam"
+  | "pluginCommand";
+
+/** 잘못 번역하면 게임이 깨질 수 있는 플러그인 데이터인지 */
+export const isPluginKind = (k: Kind) => k === "pluginParam" || k === "pluginCommand";
 
 export interface Entry {
   /** "{file}#{pointer}" */
@@ -32,18 +37,29 @@ export interface SavedEntry {
   status?: Status;
 }
 
+export interface ProjectOptions {
+  /** 플러그인 파라미터/커맨드도 추출할지 */
+  includePlugins: boolean;
+}
+
 export interface ProjectFile {
   version: number;
   entries: Record<string, SavedEntry>;
+  options?: ProjectOptions;
 }
 
 export type Engine = "mv" | "mz" | "unknown";
 
-export interface OpenedProject {
+export interface Extracted {
+  entries: Entry[];
+  /** 추출은 계속했지만 알려야 하는 문제 */
+  warnings: string[];
+}
+
+export interface OpenedProject extends Extracted {
   root: string;
   dataDir: string;
   engine: Engine;
-  entries: Entry[];
   saved: ProjectFile | null;
 }
 
@@ -118,4 +134,6 @@ export const KIND_LABELS: Record<Kind, string> = {
   scroll: "스크롤",
   choice: "선택지",
   displayName: "맵 표시명",
+  pluginParam: "플러그인 파라미터",
+  pluginCommand: "플러그인 커맨드",
 };

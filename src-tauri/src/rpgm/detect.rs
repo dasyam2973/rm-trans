@@ -28,6 +28,12 @@ impl GameLayout {
             format!("{}/{}", self.data_rel, name)
         }
     }
+
+    /// js/plugins.js의 루트 기준 상대 경로. data 폴더 자체를 연 경우에는 js 폴더가 루트 밖이라 없음
+    pub fn plugins_rel(&self) -> Option<String> {
+        let parent = self.data_rel.strip_suffix("data")?.trim_end_matches('/');
+        Some(if parent.is_empty() { "js/plugins.js".to_string() } else { format!("{parent}/js/plugins.js") })
+    }
 }
 
 /// 선택한 폴더에서 RPG Maker data 폴더 위치와 엔진 종류를 찾는다.

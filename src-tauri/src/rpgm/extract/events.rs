@@ -5,11 +5,15 @@
 //! - 105 스크롤 텍스트 시작, 405 스크롤 텍스트 한 줄
 //! - 102 선택지 (parameters[0]이 문자열 배열)
 //! - 320/324/325 이름/닉네임/프로필 변경 (parameters[1])
+//! - 357 MZ 플러그인 커맨드 (parameters[3]이 인자 객체, 플러그인 추출을 켰을 때만)
+//!
+//! MV 플러그인 커맨드(356)는 "명령 인자1 인자2" 형태의 한 줄 문자열이라
+//! 일부만 번역하면 명령 자체가 깨지므로 추출하지 않는다.
 
 use crate::jsonspan::Node;
 use crate::model::Kind;
 
-use super::Sink;
+use super::{plugins, Sink};
 
 /// 현재 이어지고 있는 대사/스크롤 블록
 struct Block {
@@ -66,6 +70,14 @@ pub fn extract_list(list: &Node, base: &str, label: &str, sink: &mut Sink) {
                 };
                 let group = sink.group_id(&format!("{base}/{i}"));
                 sink.push(param(1), param_path(1), kind, &group, &format!("{label} · #{i} {what}"), None);
+            }
+            357 if sink.plugins => {
+                block = None;
+                let plugin = param(0).and_then(Node::as_str).unwrap_or("");
+                let command = param(1).and_then(Node::as_str).unwrap_or("");
+                let group = sink.group_id(&format!("{base}/{i}"));
+                let group_label = format!("{label} · #{i} 플러그인 커맨드 {plugin}:{command}");
+                plugins::extract_command_args(param(3), &param_path(3), &group, &group_label, sink);
             }
             _ => block = None,
         }

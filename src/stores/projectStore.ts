@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { Engine, Entry, OpenedProject, ProjectFile, SavedEntry, Status } from "../types";
+import type { Engine, Entry, OpenedProject, ProjectFile, ProjectOptions, SavedEntry, Status } from "../types";
 
 interface ProjectInfo {
   root: string;
@@ -9,6 +9,7 @@ interface ProjectInfo {
 
 interface ProjectState {
   project: ProjectInfo | null;
+  options: ProjectOptions;
   entries: Entry[];
   entryById: Map<string, Entry>;
   /** 원문과 다른 번역문만 저장한다 */
@@ -20,6 +21,8 @@ interface ProjectState {
   dirty: boolean;
 
   load: (p: OpenedProject) => void;
+  /** 추출 옵션을 바꿔 다시 추출한 목록으로 교체한다. 기존 번역은 유지된다 */
+  reloadEntries: (entries: Entry[], options: ProjectOptions) => void;
   setTranslations: (updates: Record<string, string>, opts?: { clearOverride?: boolean }) => void;
   setOverrides: (ids: string[], status: Status | null) => void;
   markSaved: () => void;
@@ -28,8 +31,29 @@ interface ProjectState {
   exportMap: () => Record<string, string>;
 }
 
+const DEFAULT_OPTIONS: ProjectOptions = { includePlugins: false };
+
+/** 저장된 항목을 현재 아이템 목록 기준으로 번역문/상태/고아 항목으로 나눈다. */
+function distribute(entries: Entry[], saved: Record<string, SavedEntry>) {
+  const entryById = new Map(entries.map((e) => [e.id, e]));
+  const translations: Record<string, string> = {};
+  const overrides: Record<string, Status> = {};
+  const orphans: Record<string, SavedEntry> = {};
+  for (const [id, s] of Object.entries(saved)) {
+    const entry = entryById.get(id);
+    if (!entry) {
+      orphans[id] = s;
+      continue;
+    }
+    if (s.translation !== undefined && s.translation !== entry.original) translations[id] = s.translation;
+    if (s.status) overrides[id] = s.status;
+  }
+  return { entries, entryById, translations, overrides, orphans };
+}
+
 export const useProject = create<ProjectState>((set, get) => ({
   project: null,
+  options: DEFAULT_OPTIONS,
   entries: [],
   entryById: new Map(),
   translations: {},
@@ -38,28 +62,17 @@ export const useProject = create<ProjectState>((set, get) => ({
   dirty: false,
 
   load: (p) => {
-    const entryById = new Map(p.entries.map((e) => [e.id, e]));
-    const translations: Record<string, string> = {};
-    const overrides: Record<string, Status> = {};
-    const orphans: Record<string, SavedEntry> = {};
-    for (const [id, saved] of Object.entries(p.saved?.entries ?? {})) {
-      const entry = entryById.get(id);
-      if (!entry) {
-        orphans[id] = saved;
-        continue;
-      }
-      if (saved.translation !== undefined && saved.translation !== entry.original) translations[id] = saved.translation;
-      if (saved.status) overrides[id] = saved.status;
-    }
     set({
       project: { root: p.root, dataDir: p.dataDir, engine: p.engine },
-      entries: p.entries,
-      entryById,
-      translations,
-      overrides,
-      orphans,
+      options: { ...DEFAULT_OPTIONS, ...p.saved?.options },
+      ...distribute(p.entries, p.saved?.entries ?? {}),
       dirty: false,
     });
+  },
+
+  reloadEntries: (entries, options) => {
+    // 빠지는 아이템의 번역은 고아 항목으로 옮겨 두었다가, 다시 추출되면 되살린다
+    set({ options, ...distribute(entries, get().toProjectFile().entries), dirty: true });
   },
 
   setTranslations: (updates, opts) => {
@@ -88,11 +101,11 @@ export const useProject = create<ProjectState>((set, get) => ({
   markSaved: () => set({ dirty: false }),
 
   toProjectFile: () => {
-    const { translations, overrides, orphans } = get();
+    const { translations, overrides, orphans, options } = get();
     const entries: Record<string, SavedEntry> = { ...orphans };
     for (const [id, translation] of Object.entries(translations)) entries[id] = { translation };
     for (const [id, status] of Object.entries(overrides)) entries[id] = { ...entries[id], status };
-    return { version: 1, entries };
+    return { version: 1, entries, options };
   },
 
   exportMap: () => ({ ...get().translations }),

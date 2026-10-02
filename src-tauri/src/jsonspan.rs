@@ -17,7 +17,6 @@ pub struct Node {
 #[derive(Debug)]
 pub enum Value {
     Null,
-    #[allow(dead_code)]
     Bool(bool),
     Number(f64),
     Str(String),
@@ -63,6 +62,13 @@ impl Node {
         }
     }
 
+    pub fn as_bool(&self) -> Option<bool> {
+        match self.value {
+            Value::Bool(b) => Some(b),
+            _ => None,
+        }
+    }
+
     pub fn as_array(&self) -> Option<&[Node]> {
         match &self.value {
             Value::Array(a) => Some(a),
@@ -94,6 +100,26 @@ impl Node {
         }
         Some(node)
     }
+}
+
+/// 문자열 값 안에 JSON 텍스트가 한 번 더 인코딩되어 있을 때(플러그인 파라미터의 구조체/배열 등)
+/// "그 문자열을 JSON으로 파싱해서 이어서 찾는다"는 뜻으로 경로에 끼워 넣는 토큰.
+/// 일반 토큰의 '~'는 항상 "~0"으로 이스케이프되므로 실제 키와 겹치지 않는다.
+pub const NESTED: &str = "~j";
+
+/// 경로를 첫 번째 NESTED 토큰 기준으로 (바깥 문자열 경로, 안쪽 경로)로 나눈다.
+pub fn split_nested(pointer: &str) -> Option<(&str, &str)> {
+    let marker = format!("/{NESTED}");
+    let mut from = 0;
+    while let Some(i) = pointer[from..].find(&marker) {
+        let i = from + i;
+        let rest = &pointer[i + marker.len()..];
+        if rest.is_empty() || rest.starts_with('/') {
+            return Some((&pointer[..i], rest));
+        }
+        from = i + marker.len();
+    }
+    None
 }
 
 /// JSON Pointer 토큰 이스케이프

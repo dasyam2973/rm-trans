@@ -3,16 +3,20 @@
 mod database;
 mod events;
 mod map;
+mod plugins;
 mod system;
 
 use std::collections::HashMap;
 use std::fs;
+
+use serde::Serialize;
 
 use crate::error::{Error, Result};
 use crate::jsonspan::{self, Node};
 use crate::model::{Entry, Kind};
 
 use super::detect::GameLayout;
+use super::plugins_js;
 
 /// 데이터베이스 파일 표시 순서
 const DB_ORDER: &[&str] = &[
@@ -20,10 +24,20 @@ const DB_ORDER: &[&str] = &[
     "CommonEvents",
 ];
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Extracted {
+    pub entries: Vec<Entry>,
+    /// 추출은 계속했지만 사용자에게 알려야 하는 문제 (플러그인 파일을 읽지 못함 등)
+    pub warnings: Vec<String>,
+}
+
 /// 추출 결과를 모으는 대상. 파일 하나 단위로 만든다.
 pub(crate) struct Sink<'a> {
     file: &'a str,
     out: &'a mut Vec<Entry>,
+    /// 플러그인 커맨드 인자도 추출할지
+    plugins: bool,
 }
 
 impl Sink<'_> {
@@ -65,7 +79,8 @@ pub(crate) fn read_json(layout: &GameLayout, name: &str) -> Result<Node> {
     jsonspan::parse(&text).map_err(|e| Error::Parse { path: layout.rel_file(name), msg: e.to_string() })
 }
 
-pub fn extract_all(layout: &GameLayout) -> Result<Vec<Entry>> {
+/// `include_plugins`: 플러그인 파라미터(js/plugins.js)와 플러그인 커맨드 인자도 추출할지
+pub fn extract_all(layout: &GameLayout, include_plugins: bool) -> Result<Extracted> {
     let data_dir = layout.data_dir();
     let mut map_files: Vec<String> = fs::read_dir(&data_dir)
         .map_err(|e| Error::io(&data_dir, e))?
@@ -86,6 +101,7 @@ pub fn extract_all(layout: &GameLayout) -> Result<Vec<Entry>> {
     };
 
     let mut out = Vec::new();
+    let mut warnings = Vec::new();
     for stem in DB_ORDER {
         let name = format!("{stem}.json");
         if !data_dir.join(&name).is_file() {
@@ -93,7 +109,7 @@ pub fn extract_all(layout: &GameLayout) -> Result<Vec<Entry>> {
         }
         let root = read_json(layout, &name)?;
         let file = layout.rel_file(&name);
-        let mut sink = Sink { file: &file, out: &mut out };
+        let mut sink = Sink { file: &file, out: &mut out, plugins: include_plugins };
         match *stem {
             "System" => system::extract(&root, &mut sink),
             "Troops" => database::extract_troops(&root, &mut sink),
@@ -105,9 +121,29 @@ pub fn extract_all(layout: &GameLayout) -> Result<Vec<Entry>> {
     for name in &map_files {
         let root = read_json(layout, name)?;
         let file = layout.rel_file(name);
-        let mut sink = Sink { file: &file, out: &mut out };
+        let mut sink = Sink { file: &file, out: &mut out, plugins: include_plugins };
         map::extract(name, &root, &map_names, &mut sink);
     }
 
-    Ok(out)
+    if include_plugins {
+        if let Err(msg) = extract_plugins_js(layout, &mut out) {
+            warnings.push(msg);
+        }
+    }
+
+    Ok(Extracted { entries: out, warnings })
+}
+
+/// js/plugins.js의 플러그인 파라미터. 파일이 없으면 조용히 넘어가고, 읽을 수 없으면 경고 메시지를 돌려준다.
+fn extract_plugins_js(layout: &GameLayout, out: &mut Vec<Entry>) -> std::result::Result<(), String> {
+    let Some(file) = layout.plugins_rel() else { return Ok(()) };
+    let path = file.split('/').fold(layout.root.clone(), |p, part| p.join(part));
+    if !path.is_file() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
+    let range = plugins_js::json_range(&text).ok_or_else(|| format!("{file}: $plugins 배열을 찾을 수 없습니다."))?;
+    let root = jsonspan::parse(&text[range]).map_err(|e| format!("{file}: {e}"))?;
+    plugins::extract(&root, &mut Sink { file: &file, out, plugins: true });
+    Ok(())
 }

@@ -14,6 +14,10 @@ pub enum Kind {
     Scroll,
     Choice,
     DisplayName,
+    /// js/plugins.js의 플러그인 파라미터
+    PluginParam,
+    /// 이벤트의 플러그인 커맨드 인자 (MZ 357)
+    PluginCommand,
 }
 
 /// 번역 가능한 문자열 하나. 원본 JSON의 문자열 값 하나와 1:1로 대응한다.

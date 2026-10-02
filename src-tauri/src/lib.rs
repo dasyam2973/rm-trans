@@ -13,6 +13,7 @@ pub fn run() {
         .manage(ai::runner::AiState::default())
         .invoke_handler(tauri::generate_handler![
             commands::project::open_project,
+            commands::project::extract_entries,
             commands::project::save_project,
             commands::export::export_project,
             commands::ai::ai_translate,

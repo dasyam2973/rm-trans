@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { openProject, saveProject } from "./api/project";
+import { extractEntries, openProject, saveProject } from "./api/project";
 import { MenuBar, type DialogKind } from "./components/layout/MenuBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { FilterBar } from "./components/filter/FilterBar";
@@ -10,10 +10,12 @@ import { SaveAsDialog } from "./components/dialogs/SaveAsDialog";
 import { BulkEditDialog } from "./components/dialogs/BulkEditDialog";
 import { AiSettingsDialog } from "./components/dialogs/AiSettingsDialog";
 import { AiTranslateDialog } from "./components/dialogs/AiTranslateDialog";
+import { PluginWarningDialog } from "./components/dialogs/PluginWarningDialog";
 import { filterEntries } from "./lib/filter";
 import { useFilter } from "./stores/filterStore";
 import { useProject } from "./stores/projectStore";
 import { useSelection } from "./stores/selectionStore";
+import { isPluginKind } from "./types";
 
 export default function App() {
   const { project, entries, translations, overrides } = useProject();
@@ -21,6 +23,7 @@ export default function App() {
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const { result: filtered, error: filterError } = useMemo(
     () => filterEntries(entries, translations, overrides, filter),
@@ -33,10 +36,13 @@ export default function App() {
     if (typeof dir !== "string") return;
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
-      useProject.getState().load(await openProject(dir));
+      const opened = await openProject(dir);
+      useProject.getState().load(opened);
       useSelection.getState().clear();
       useFilter.getState().reset();
+      if (opened.warnings.length) setNotice(opened.warnings.join("\n"));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -56,6 +62,37 @@ export default function App() {
       setError(String(e));
     }
   }, []);
+
+  /** 플러그인 데이터 포함 여부를 바꾸고 아이템 목록을 다시 추출한다. */
+  const setIncludePlugins = useCallback(async (includePlugins: boolean) => {
+    const s = useProject.getState();
+    if (!s.project) return;
+    (document.activeElement as HTMLElement | null)?.blur();
+    setError(null);
+    setNotice(null);
+    try {
+      const { entries, warnings } = await extractEntries(s.project.root, includePlugins);
+      useProject.getState().reloadEntries(entries, { ...s.options, includePlugins });
+      useSelection.getState().clear();
+      // 더 이상 없는 파일/종류로 걸러져서 목록이 비지 않도록 정리
+      const f = useFilter.getState();
+      const files = new Set(entries.map((e) => e.file));
+      const kinds = new Set(entries.map((e) => e.kind));
+      f.set({ files: f.files.filter((x) => files.has(x)), kinds: f.kinds.filter((k) => kinds.has(k)) });
+
+      const messages = [...warnings];
+      if (includePlugins && !entries.some((e) => isPluginKind(e.kind))) messages.push("추출된 플러그인 데이터가 없습니다.");
+      if (messages.length) setNotice(messages.join("\n"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const handleTogglePlugins = useCallback(() => {
+    // 끌 때는 번역이 보존되므로 바로 적용하고, 켤 때만 위험성을 알린다
+    if (useProject.getState().options.includePlugins) setIncludePlugins(false);
+    else setDialog("plugins");
+  }, [setIncludePlugins]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -77,12 +114,18 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <MenuBar onOpen={handleOpen} onSave={handleSave} onDialog={setDialog} />
+      <MenuBar onOpen={handleOpen} onSave={handleSave} onDialog={setDialog} onTogglePlugins={handleTogglePlugins} />
 
       {error && (
         <div className="flex items-start gap-2 border-b border-rose-900 bg-rose-950/60 px-3 py-1.5 text-sm text-rose-200">
           <span className="flex-1 whitespace-pre-wrap">{error}</span>
           <button onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+      {notice && (
+        <div className="flex items-start gap-2 border-b border-amber-900 bg-amber-950/50 px-3 py-1.5 text-sm text-amber-200">
+          <span className="flex-1 whitespace-pre-wrap">{notice}</span>
+          <button onClick={() => setNotice(null)}>✕</button>
         </div>
       )}
 
@@ -113,6 +156,15 @@ export default function App() {
       {dialog === "bulk" && <BulkEditDialog onClose={close} />}
       {dialog === "aiSettings" && <AiSettingsDialog onClose={close} />}
       {dialog === "aiTranslate" && project && <AiTranslateDialog filtered={filtered} onClose={close} />}
+      {dialog === "plugins" && project && (
+        <PluginWarningDialog
+          onClose={close}
+          onConfirm={() => {
+            close();
+            setIncludePlugins(true);
+          }}
+        />
+      )}
     </div>
   );
 }

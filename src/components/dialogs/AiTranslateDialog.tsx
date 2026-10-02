@@ -3,7 +3,7 @@ import { aiCancel, aiTranslate, getAiSettings, onAiProgress, onAiResult } from "
 import { statusOf } from "../../lib/status";
 import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
-import type { AiSummary, Entry } from "../../types";
+import { isPluginKind, type AiSummary, type Entry } from "../../types";
 import { Button, Dialog } from "../ui";
 
 type Scope = "selected" | "filteredUntranslated" | "filtered";
@@ -17,7 +17,10 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
   const [summary, setSummary] = useState<AiSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const targets = useMemo(() => {
+  // 플러그인 데이터는 AI가 식별자까지 번역하기 쉬워서 기본으로 제외한다
+  const [excludePlugins, setExcludePlugins] = useState(true);
+
+  const scoped = useMemo(() => {
     switch (scope) {
       // 그룹이 이어지도록 원래 순서를 유지
       case "selected":
@@ -28,6 +31,11 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
         return filtered;
     }
   }, [scope, entries, selected, filtered, translations, overrides]);
+  const pluginCount = useMemo(() => scoped.filter((e) => isPluginKind(e.kind)).length, [scoped]);
+  const targets = useMemo(
+    () => (excludePlugins && pluginCount > 0 ? scoped.filter((e) => !isPluginKind(e.kind)) : scoped),
+    [scoped, excludePlugins, pluginCount],
+  );
 
   const start = async () => {
     setError(null);
@@ -97,6 +105,25 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
           </label>
         ))}
       </div>
+      {pluginCount > 0 && (
+        <div className="mb-4 rounded border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              className="accent-amber-500"
+              checked={excludePlugins}
+              disabled={running}
+              onChange={(e) => setExcludePlugins(e.target.checked)}
+            />
+            플러그인 데이터 제외 ({pluginCount.toLocaleString()}개)
+          </label>
+          {!excludePlugins && (
+            <p className="mt-1 text-xs text-amber-300/80">
+              ⚠ AI가 파일명·식별자·스크립트까지 번역해 게임이 깨질 수 있습니다. 결과를 반드시 직접 확인하세요.
+            </p>
+          )}
+        </div>
+      )}
       <p className="mb-4 text-xs text-zinc-500">
         원문을 기준으로 번역하며, 결과는 도착하는 대로 번역문에 반영됩니다. 같은 그룹(대사 블록 등)은 가능한 한 같은 요청으로
         묶어 보냅니다.

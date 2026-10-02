@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { basename, dirname, join } from "@tauri-apps/api/path";
 import { exportProject } from "../../api/project";
 import { useProject } from "../../stores/projectStore";
-import type { ExportReport } from "../../types";
+import { isPluginKind, type ExportReport } from "../../types";
 import { Button, Dialog, Field, inputClass } from "../ui";
 
 /** 원본 게임 폴더를 통째로 복사한 뒤 번역문을 적용해 새 폴더로 저장한다. */
@@ -14,6 +14,13 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<ExportReport | null>(null);
+  const pluginCount = useMemo(() => {
+    const { translations, entryById } = useProject.getState();
+    return Object.keys(translations).filter((id) => {
+      const kind = entryById.get(id)?.kind;
+      return kind !== undefined && isPluginKind(kind);
+    }).length;
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -78,6 +85,12 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
           <p className="mb-3 text-sm text-zinc-400">
             게임 폴더 전체를 새 폴더로 복사하고 번역문을 적용합니다. 원본 폴더는 바뀌지 않습니다.
           </p>
+          {pluginCount > 0 && (
+            <p className="mb-3 rounded border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+              ⚠ 플러그인 데이터 번역 {pluginCount.toLocaleString()}개가 적용됩니다. 저장한 뒤 게임을 실행해 정상적으로
+              동작하는지 꼭 확인하세요.
+            </p>
+          )}
           <Field label="저장할 위치">
             <div className="flex gap-2">
               <input className={`${inputClass} flex-1`} value={parent} onChange={(e) => setParent(e.target.value)} />

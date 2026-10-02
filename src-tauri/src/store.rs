@@ -27,11 +27,20 @@ pub struct SavedEntry {
     pub status: Option<Status>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ProjectOptions {
+    /// 플러그인 파라미터/커맨드도 추출할지
+    pub include_plugins: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectFile {
     pub version: u32,
     /// 아이템 ID → 저장된 번역 정보. BTreeMap으로 저장 순서를 고정해 diff를 안정적으로 유지
     pub entries: BTreeMap<String, SavedEntry>,
+    #[serde(default)]
+    pub options: ProjectOptions,
 }
 
 fn project_path(root: &Path) -> PathBuf {
