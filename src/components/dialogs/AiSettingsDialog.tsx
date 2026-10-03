@@ -145,6 +145,34 @@ export function AiSettingsDialog({ onClose }: { onClose: () => void }) {
             </label>
           </Field>
           <Field
+            label="대사 블록 병합 번역"
+            hint="대사 블록의 줄이 모두 번역 대상이면 줄을 이어 한 문장으로 번역한 뒤, 띄어쓰기 기준으로 원래 줄 수 안에 나눠 담습니다. 일부 줄만 대상이면 줄 단위로 번역합니다. 일본어/중국어/태국어 대상에는 적용되지 않습니다. 한 줄 최대 폭은 전각 글자 수 기준이며(반각은 0.5), 기본 창에서 얼굴 그래픽이 있으면 약 22, 없으면 약 27입니다."
+          >
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="accent-sky-500"
+                  checked={s.mergeLines}
+                  onChange={(e) => patch({ mergeLines: e.target.checked })}
+                />
+                줄을 이어 번역한 뒤 다시 나누기
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                한 줄 최대 폭
+                <input
+                  className={`${inputClass} w-20`}
+                  type="number"
+                  step="0.5"
+                  min="1"
+                  value={s.maxLineWidth}
+                  disabled={!s.mergeLines}
+                  onChange={(e) => patch({ maxLineWidth: Math.max(1, Number(e.target.value)) })}
+                />
+              </label>
+            </div>
+          </Field>
+          <Field
             label="시스템 프롬프트"
             hint="번역 방침을 자유롭게 적으세요. {{language}}는 대상 언어로 치환되고, 입출력 JSON 형식 지시는 자동으로 뒤에 붙습니다."
           >

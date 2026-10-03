@@ -33,6 +33,10 @@ pub struct AiSettings {
     pub response_mode: ResponseMode,
     /// 원문의 제어 문자가 빠지거나 중복된 번역을 실패로 처리할지
     pub require_codes: bool,
+    /// 대사 블록이 통째로 번역 대상이면 줄을 이어 번역한 뒤 다시 나눌지 (띄어쓰기를 쓰는 대상 언어에서만)
+    pub merge_lines: bool,
+    /// 병합 번역 결과를 나눌 때 한 줄의 최대 폭 (전각 글자 수 기준, 반각은 0.5)
+    pub max_line_width: f32,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +64,8 @@ impl Default for AiSettings {
             target_language: "Korean".into(),
             response_mode: ResponseMode::default(),
             require_codes: true,
+            merge_lines: true,
+            max_line_width: 22.0,
         }
     }
 }

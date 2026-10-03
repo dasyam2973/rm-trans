@@ -51,6 +51,39 @@ fn code_at(src: &str, i: usize) -> Option<(usize, bool)> {
     (digits > 0).then_some((1 + digits, false))
 }
 
+/// 메시지 창에서 차지하는 대략적인 폭 (전각 한 글자 = 1, 반각 = 0.5).
+/// 서식 코드는 0, 아이콘은 1, 이름·변수처럼 내용이 들어가는 코드는 추정값을 쓴다.
+pub fn display_width(s: &str) -> f32 {
+    let mut width = 0.0;
+    let mut i = 0;
+    while i < s.len() {
+        if let Some((len, _)) = code_at(s, i) {
+            width += code_width(&s[i..i + len]);
+            i += len;
+        } else {
+            let c = s[i..].chars().next().expect("문자 경계");
+            // 라틴/키릴 문자 등은 반각, 한글 자모(U+1100)부터는 전각으로 본다. 반각 가타카나는 예외
+            width += if c < '\u{1100}' || ('\u{FF61}'..='\u{FF9F}').contains(&c) { 0.5 } else { 1.0 };
+            i += c.len_utf8();
+        }
+    }
+    width
+}
+
+fn code_width(code: &str) -> f32 {
+    if code.starts_with('%') {
+        return 1.0;
+    }
+    let name: String = code[1..].chars().take_while(char::is_ascii_alphabetic).collect();
+    match name.to_ascii_uppercase().as_str() {
+        "I" | "G" => 1.0,
+        "V" => 2.0,
+        "N" | "P" => 4.0,
+        "" if code == "\\\\" => 0.5,
+        _ => 0.0,
+    }
+}
+
 fn split(src: &str) -> Vec<Piece<'_>> {
     let mut pieces = Vec::new();
     let mut text_start = 0;
@@ -204,6 +237,13 @@ mod tests {
         assert!(!mask("\\C[2]\\I[5]").has_text());
         assert!(!mask("\\V[1]").has_text());
         assert!(mask("\\C[2]아\\C[0]").has_text());
+    }
+
+    #[test]
+    fn width() {
+        assert_eq!(display_width("안녕 ab"), 3.5);
+        assert_eq!(display_width("\\C[2]\\I[64]ポーション\\C[0]"), 6.0);
+        assert_eq!(display_width("\\N[1]は"), 5.0);
     }
 
     #[test]

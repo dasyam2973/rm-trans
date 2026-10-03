@@ -122,12 +122,14 @@ mod tests {
 
     #[test]
     fn sends_only_matching_glossary() {
-        use crate::ai::codes;
+        use crate::ai::runner::AiItem;
         use crate::store::GlossaryTerm;
 
         let term = |s: &str, t: &str, n: Option<&str>| GlossaryTerm { source: s.into(), target: t.into(), note: n.map(Into::into) };
         let glossary = Glossary::new(vec![term("ハロルド", "해롤드", Some("남성")), term("魔王", "마왕", None), term("村人", "마을 사람", None)]);
-        let job = |text: &str, context: Option<&str>| Job { id: String::new(), group: "g".into(), context: context.map(Into::into), masked: codes::mask(text) };
+        let job = |text: &str, context: Option<&str>| {
+            Job::new(AiItem { id: String::new(), text: text.into(), group: "g".into(), context: context.map(Into::into), merge: false })
+        };
 
         let msg = user_message(&[job("ハロルドさん！", Some("村人"))], &glossary);
         let v: Value = serde_json::from_str(&msg).unwrap();

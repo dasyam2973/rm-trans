@@ -1,5 +1,6 @@
 //! 번역 요청을 배치로 나눠 동시에 보내고, 결과를 이벤트로 프론트엔드에 흘려보낸다.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -10,7 +11,7 @@ use tokio::sync::Notify;
 
 use super::codes::{self, Masked};
 use super::glossary::Glossary;
-use super::{client, prompt, settings::AiSettings};
+use super::{client, lines, prompt, settings::AiSettings};
 use crate::store::GlossaryTerm;
 
 pub const EVENT_RESULT: &str = "ai://result";
@@ -23,14 +24,88 @@ pub struct AiItem {
     pub text: String,
     pub group: String,
     pub context: Option<String>,
+    /// 대사 줄이고 그 블록의 대사 줄이 모두 이번 요청에 들어 있는지 (병합 번역 대상)
+    #[serde(default)]
+    pub merge: bool,
 }
 
 /// 제어 문자를 마스킹한 번역 대상
 pub struct Job {
-    pub id: String,
+    /// 대상 아이템 ID. 병합된 대사 블록이면 줄 순서대로 여러 개
+    pub ids: Vec<String>,
     pub group: String,
     pub context: Option<String>,
     pub masked: Masked,
+    /// 병합된 블록의 번역문을 나눌 때 쓰는 한 줄 최대 폭
+    line_limit: f32,
+}
+
+impl Job {
+    pub fn new(item: AiItem) -> Self {
+        Job { masked: codes::mask(&item.text), ids: vec![item.id], group: item.group, context: item.context, line_limit: 0.0 }
+    }
+
+    /// 대사 블록의 줄들을 이어 작업 하나로 만든다.
+    fn merged(lines: Vec<AiItem>, max_width: f32) -> Self {
+        let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
+        let masked = codes::mask(&lines::join(&texts));
+        // 원문 줄이 이미 그만큼 넓었다면 창이 그 폭을 담을 수 있다고 본다
+        let widest = texts.iter().map(|t| codes::display_width(t.trim())).fold(0.0, f32::max);
+        let (group, context) = (lines[0].group.clone(), lines[0].context.clone());
+        Job { ids: lines.into_iter().map(|l| l.id).collect(), group, context, masked, line_limit: max_width.max(widest) }
+    }
+
+    /// 복원까지 마친 번역문을 아이템별 결과로 바꾼다. 병합된 블록은 원래 줄 수에 맞춰 나눈다.
+    fn results(&self, text: String) -> Vec<TranslatedItem> {
+        if let [id] = self.ids.as_slice() {
+            return vec![TranslatedItem { id: id.clone(), text }];
+        }
+        let parts = lines::split(&text, self.ids.len(), self.line_limit);
+        self.ids.iter().zip(parts).map(|(id, text)| TranslatedItem { id: id.clone(), text }).collect()
+    }
+}
+
+enum Slot {
+    Single(AiItem),
+    /// 병합할 그룹. 그 그룹 첫 줄의 자리에 둔다
+    Merged(String),
+}
+
+/// 아이템을 번역 작업으로 바꾼다. 병합 대상 줄은 그룹별로 이어 작업 하나로 만든다.
+fn build_jobs(items: Vec<AiItem>, settings: &AiSettings) -> Vec<Job> {
+    let enabled = settings.merge_lines && lines::splits_by_space(&settings.target_language);
+    let mut merged: HashMap<String, Vec<AiItem>> = HashMap::new();
+    let mut slots = Vec::new();
+    for item in items {
+        if enabled && item.merge {
+            let lines = merged.entry(item.group.clone()).or_default();
+            if lines.is_empty() {
+                slots.push(Slot::Merged(item.group.clone()));
+            }
+            lines.push(item);
+        } else {
+            slots.push(Slot::Single(item));
+        }
+    }
+    slots
+        .into_iter()
+        .flat_map(|slot| match slot {
+            Slot::Single(item) => vec![Job::new(item)],
+            Slot::Merged(group) => {
+                let lines = merged.remove(&group).expect("슬롯을 만들 때 넣었다");
+                if lines.len() == 1 {
+                    lines.into_iter().map(Job::new).collect()
+                } else {
+                    vec![Job::merged(lines, settings.max_line_width)]
+                }
+            }
+        })
+        .collect()
+}
+
+/// 작업들이 담고 있는 아이템 수
+fn item_count(jobs: &[Job]) -> usize {
+    jobs.iter().map(|j| j.ids.len()).sum()
 }
 
 #[derive(Serialize, Clone)]
@@ -146,8 +221,8 @@ async fn translate_batch(
         for (i, job) in batch.iter().enumerate() {
             let Some(text) = map.get(&i) else { continue };
             match job.masked.unmask(text, s.require_codes) {
-                Some(text) => translated.push(TranslatedItem { id: job.id.clone(), text }),
-                None => mismatched += 1,
+                Some(text) => translated.extend(job.results(text)),
+                None => mismatched += job.ids.len(),
             }
         }
         return Ok((translated, mismatched));
@@ -166,12 +241,8 @@ pub async fn run(
     let total = items.len();
     let system = prompt::system_prompt(&settings.system_prompt, &settings.target_language);
     let http = reqwest::Client::builder().timeout(Duration::from_secs(300)).build().expect("HTTP 클라이언트 생성");
-    let jobs: Vec<Job> = items
-        .into_iter()
-        .map(|item| Job { masked: codes::mask(&item.text), id: item.id, group: item.group, context: item.context })
-        .filter(|job| job.masked.has_text())
-        .collect();
-    let skipped = total - jobs.len();
+    let jobs: Vec<Job> = build_jobs(items, &settings).into_iter().filter(|job| job.masked.has_text()).collect();
+    let skipped = total - item_count(&jobs);
     let batches = make_batches(jobs, settings.batch_size);
 
     let mut summary = AiSummary { skipped, ..Default::default() };
@@ -183,10 +254,11 @@ pub async fn run(
         .map(|batch| {
             let (http, settings, system, glossary) = (&http, &settings, &system, &glossary);
             async move {
+                let len = item_count(&batch);
                 if state.cancel.load(Ordering::Relaxed) {
-                    return (batch.len(), None);
+                    return (len, None);
                 }
-                (batch.len(), Some(translate_batch(http, settings, system, glossary, &batch).await))
+                (len, Some(translate_batch(http, settings, system, glossary, &batch).await))
             }
         })
         .buffer_unordered(settings.concurrency.max(1));
@@ -228,8 +300,41 @@ pub async fn run(
 mod tests {
     use super::*;
 
+    fn ai_item(id: &str, text: &str, group: &str, merge: bool) -> AiItem {
+        AiItem { id: id.into(), text: text.into(), group: group.into(), context: None, merge }
+    }
+
     fn item(group: &str) -> Job {
-        Job { id: String::new(), group: group.into(), context: None, masked: codes::mask("") }
+        Job::new(ai_item("", "", group, false))
+    }
+
+    #[test]
+    fn merges_whole_blocks() {
+        let items = vec![
+            ai_item("s", "ハロルド", "a", false),
+            ai_item("1", "昨日、村の外れで", "a", true),
+            ai_item("2", "光を見た。", "a", true),
+            ai_item("3", "一行だけ", "b", true),
+            ai_item("4", "部分", "c", false),
+        ];
+        let jobs = build_jobs(items.clone(), &AiSettings::default());
+        let ids: Vec<_> = jobs.iter().map(|j| j.ids.join(",")).collect();
+        assert_eq!(ids, ["s", "1,2", "3", "4"]);
+        assert_eq!(jobs[1].masked.text, "昨日、村の外れで光を見た。");
+
+        // 띄어쓰기를 쓰지 않는 대상 언어나 설정이 꺼져 있으면 병합하지 않는다
+        let settings = AiSettings { target_language: "Japanese".into(), ..AiSettings::default() };
+        assert_eq!(build_jobs(items.clone(), &settings).len(), 5);
+        let settings = AiSettings { merge_lines: false, ..AiSettings::default() };
+        assert_eq!(build_jobs(items, &settings).len(), 5);
+    }
+
+    #[test]
+    fn splits_merged_result() {
+        let job = Job::merged(vec![ai_item("1", "昨日、村の外れで", "a", true), ai_item("2", "光を見た。", "a", true)], 22.0);
+        let results = job.results("어제 마을 밖에서 빛을 봤다.".into());
+        let texts: Vec<_> = results.iter().map(|r| (r.id.as_str(), r.text.as_str())).collect();
+        assert_eq!(texts, [("1", "어제 마을 밖에서 빛을 봤다."), ("2", "")]);
     }
 
     #[test]

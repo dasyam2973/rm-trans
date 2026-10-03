@@ -52,7 +52,20 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
     ]);
     try {
       const settings = await getAiSettings();
-      const items = targets.map((e) => ({ id: e.id, text: e.original, group: e.group, context: e.context }));
+      // 블록의 대사 줄이 모두 대상에 들어 있을 때만 병합 번역한다. 일부만 들어오면 줄 단위로 번역
+      const countDialogue = (list: Entry[]) => {
+        const counts = new Map<string, number>();
+        for (const e of list) if (e.kind === "dialogue") counts.set(e.group, (counts.get(e.group) ?? 0) + 1);
+        return counts;
+      };
+      const [inBlock, inTargets] = [countDialogue(entries), countDialogue(targets)];
+      const items = targets.map((e) => ({
+        id: e.id,
+        text: e.original,
+        group: e.group,
+        context: e.context,
+        merge: e.kind === "dialogue" && inTargets.get(e.group) === inBlock.get(e.group),
+      }));
       setSummary(await aiTranslate(settings, items, useProject.getState().glossary));
     } catch (e) {
       setError(String(e));

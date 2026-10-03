@@ -91,6 +91,10 @@ export interface AiSettings {
   responseMode: ResponseMode;
   /** 원문의 제어 문자가 빠지거나 중복된 번역을 실패로 처리할지 */
   requireCodes: boolean;
+  /** 대사 블록이 통째로 번역 대상이면 줄을 이어 번역한 뒤 다시 나눌지 */
+  mergeLines: boolean;
+  /** 병합 번역 결과를 나눌 때 한 줄의 최대 폭 (전각 글자 수 기준, 반각은 0.5) */
+  maxLineWidth: number;
 }
 
 export type ResponseMode = "jsonObject" | "structured" | "none";
@@ -124,6 +128,8 @@ export interface AiItem {
   text: string;
   group: string;
   context?: string;
+  /** 대사 줄이고 그 블록의 대사 줄이 모두 이번 요청에 들어 있는지 (병합 번역 대상) */
+  merge?: boolean;
 }
 
 export interface AiSummary {
