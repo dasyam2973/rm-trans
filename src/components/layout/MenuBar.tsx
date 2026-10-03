@@ -2,22 +2,26 @@ import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
 import { Button } from "../ui";
 
-export type DialogKind = "saveAs" | "bulk" | "glossary" | "aiSettings" | "aiTranslate" | "plugins";
+export type DialogKind = "saveAs" | "bulk" | "glossary" | "aiSettings" | "aiTranslate" | "plugins" | "detailed" | "locale";
 
 export function MenuBar({
   onOpen,
   onSave,
   onDialog,
   onTogglePlugins,
+  onToggleDetailed,
 }: {
   onOpen: () => void;
   onSave: () => void;
   onDialog: (d: DialogKind) => void;
   onTogglePlugins: () => void;
+  onToggleDetailed: () => void;
 }) {
   const project = useProject((s) => s.project);
   const dirty = useProject((s) => s.dirty);
   const includePlugins = useProject((s) => s.options.includePlugins);
+  const detailed = useProject((s) => s.options.detailed);
+  const localePairCount = useProject((s) => s.options.localePairs.length);
   const selectedCount = useSelection((s) => s.selected.size);
   const glossaryCount = useProject((s) => s.glossary.length);
   const loaded = project !== null;
@@ -48,6 +52,25 @@ export function MenuBar({
         }
       >
         {includePlugins ? "⚠ 플러그인 포함" : "플러그인 포함"}
+      </Button>
+      <Button
+        onClick={onToggleDetailed}
+        disabled={!loaded}
+        className={detailed ? "border-amber-500! bg-amber-600/25! text-amber-200!" : ""}
+        title={
+          detailed
+            ? "세부 수정 중입니다. 클릭하면 외부 JSON과 플러그인 설정값을 목록에서 제외합니다 (입력한 번역은 보존)."
+            : "게임 폴더의 다른 JSON 파일과 플러그인의 숫자/불리언 같은 설정값도 추출합니다. 잘못 수정하면 게임이 깨질 수 있습니다."
+        }
+      >
+        {detailed ? "⚠ 세부 수정" : "세부 수정"}
+      </Button>
+      <Button
+        onClick={() => onDialog("locale")}
+        disabled={!loaded}
+        title="번역 플러그인의 언어별 JSON 파일(원본 언어 → 대상 언어)을 등록합니다."
+      >
+        언어 파일{localePairCount > 0 && ` (${localePairCount})`}
       </Button>
 
       <div className="mx-2 h-5 w-px bg-zinc-700" />

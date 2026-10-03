@@ -6,7 +6,7 @@ use crate::error::Result;
 use crate::model::{Engine, Entry};
 use crate::rpgm::extract::Extracted;
 use crate::rpgm::{detect, extract};
-use crate::store::{self, ProjectFile};
+use crate::store::{self, ProjectFile, ProjectOptions};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,8 +26,8 @@ pub async fn open_project(path: String) -> Result<OpenedProject> {
         let root = PathBuf::from(&path);
         let layout = detect::detect(&root)?;
         let saved = store::load(&root)?;
-        let include_plugins = saved.as_ref().is_some_and(|s| s.options.include_plugins);
-        let Extracted { entries, warnings } = extract::extract_all(&layout, include_plugins)?;
+        let options = saved.as_ref().map(|s| s.options.clone()).unwrap_or_default();
+        let Extracted { entries, warnings } = extract::extract_all(&layout, &options)?;
         Ok(OpenedProject { root: path, data_dir: layout.data_rel, engine: layout.engine, entries, warnings, saved })
     })
     .await
@@ -36,10 +36,10 @@ pub async fn open_project(path: String) -> Result<OpenedProject> {
 
 /// 추출 옵션을 바꿨을 때 아이템 목록만 다시 만든다.
 #[tauri::command]
-pub async fn extract_entries(root: String, include_plugins: bool) -> Result<Extracted> {
+pub async fn extract_entries(root: String, options: ProjectOptions) -> Result<Extracted> {
     tauri::async_runtime::spawn_blocking(move || {
         let layout = detect::detect(&PathBuf::from(root))?;
-        extract::extract_all(&layout, include_plugins)
+        extract::extract_all(&layout, &options)
     })
     .await
     .expect("extract_entries 작업 패닉")

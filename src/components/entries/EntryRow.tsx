@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { GlossaryMatcher } from "../../lib/glossary";
-import { isPluginKind, KIND_LABELS, type Entry, type GlossaryTerm, type Status } from "../../types";
+import { isRiskyKind, KIND_LABELS, type Entry, type GlossaryTerm, type Status } from "../../types";
 
 interface Props {
   entry: Entry;
@@ -105,10 +105,10 @@ export const EntryRow = memo(function EntryRow({
 
       <div className="min-w-0">
         <div className="mb-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
-          {isPluginKind(entry.kind) ? (
+          {isRiskyKind(entry.kind) ? (
             <span
               className="rounded bg-amber-600/25 px-1 text-amber-300"
-              title="플러그인 데이터입니다. 화면에 표시되는 문구인지 확인한 뒤 번역하세요. 파일명·식별자·스크립트 등을 바꾸면 게임이 깨질 수 있습니다."
+              title="플러그인·외부 JSON 데이터입니다. 화면에 표시되는 문구인지 확인한 뒤 번역하세요. 파일명·식별자·스크립트 등을 바꾸면 게임이 깨질 수 있습니다."
             >
               ⚠ {KIND_LABELS[entry.kind]}
             </span>

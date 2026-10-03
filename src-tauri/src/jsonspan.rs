@@ -122,6 +122,14 @@ pub fn split_nested(pointer: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// NESTED 토큰을 포함한 경로의 문자열 값을 찾는다. (중첩 인코딩된 JSON 안쪽까지)
+pub fn resolve_str(root: &Node, pointer: &str) -> Option<String> {
+    match split_nested(pointer) {
+        None => root.pointer(pointer)?.as_str().map(str::to_string),
+        Some((outer, inner)) => resolve_str(&parse(root.pointer(outer)?.as_str()?).ok()?, inner),
+    }
+}
+
 /// JSON Pointer 토큰 이스케이프
 pub fn escape_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")

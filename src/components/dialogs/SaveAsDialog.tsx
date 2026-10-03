@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { basename, dirname, join } from "@tauri-apps/api/path";
 import { exportProject } from "../../api/project";
 import { useProject } from "../../stores/projectStore";
-import { isPluginKind, type ExportReport } from "../../types";
+import { isRiskyKind, type ExportReport } from "../../types";
 import { Button, Dialog, Field, inputClass } from "../ui";
 
 /** 원본 게임 폴더를 통째로 복사한 뒤 번역문을 적용해 새 폴더로 저장한다. (옵션: 번역된 파일만) */
@@ -19,7 +19,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
     const { translations, entryById } = useProject.getState();
     return Object.keys(translations).filter((id) => {
       const kind = entryById.get(id)?.kind;
-      return kind !== undefined && isPluginKind(kind);
+      return kind !== undefined && isRiskyKind(kind);
     }).length;
   }, []);
 
@@ -40,7 +40,8 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
     setError(null);
     try {
       const dest = await join(parent, name.trim());
-      setReport(await exportProject(project.root, dest, useProject.getState().exportMap(), translatedOnly));
+      const s = useProject.getState();
+      setReport(await exportProject(project.root, dest, s.exportMap(), translatedOnly, s.options.localePairs));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -100,7 +101,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
           </label>
           {pluginCount > 0 && (
             <p className="mb-3 rounded border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
-              ⚠ 플러그인 데이터 번역 {pluginCount.toLocaleString()}개가 적용됩니다. 저장한 뒤 게임을 실행해 정상적으로
+              ⚠ 플러그인·JSON 데이터 번역 {pluginCount.toLocaleString()}개가 적용됩니다. 저장한 뒤 게임을 실행해 정상적으로
               동작하는지 꼭 확인하세요.
             </p>
           )}

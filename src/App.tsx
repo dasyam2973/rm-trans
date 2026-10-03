@@ -11,13 +11,15 @@ import { BulkEditDialog } from "./components/dialogs/BulkEditDialog";
 import { AiSettingsDialog } from "./components/dialogs/AiSettingsDialog";
 import { AiTranslateDialog } from "./components/dialogs/AiTranslateDialog";
 import { PluginWarningDialog } from "./components/dialogs/PluginWarningDialog";
+import { DetailedWarningDialog } from "./components/dialogs/DetailedWarningDialog";
+import { LocalePairsDialog } from "./components/dialogs/LocalePairsDialog";
 import { GlossaryDialog } from "./components/dialogs/GlossaryDialog";
 import { filterEntries } from "./lib/filter";
 import { useGlossaryMatcher } from "./lib/glossary";
 import { useFilter } from "./stores/filterStore";
 import { useProject } from "./stores/projectStore";
 import { useSelection } from "./stores/selectionStore";
-import { isPluginKind } from "./types";
+import { isPluginKind, type ProjectOptions } from "./types";
 
 export default function App() {
   const { project, entries, translations, overrides } = useProject();
@@ -66,16 +68,17 @@ export default function App() {
     }
   }, []);
 
-  /** 플러그인 데이터 포함 여부를 바꾸고 아이템 목록을 다시 추출한다. */
-  const setIncludePlugins = useCallback(async (includePlugins: boolean) => {
+  /** 추출 옵션(플러그인 포함, 세부 수정)을 바꾸고 아이템 목록을 다시 추출한다. */
+  const changeOptions = useCallback(async (changes: Partial<ProjectOptions>) => {
     const s = useProject.getState();
     if (!s.project) return;
     (document.activeElement as HTMLElement | null)?.blur();
     setError(null);
     setNotice(null);
+    const options = { ...s.options, ...changes };
     try {
-      const { entries, warnings } = await extractEntries(s.project.root, includePlugins);
-      useProject.getState().reloadEntries(entries, { ...s.options, includePlugins });
+      const { entries, warnings } = await extractEntries(s.project.root, options);
+      useProject.getState().reloadEntries(entries, options);
       useSelection.getState().clear();
       // 더 이상 없는 파일/종류로 걸러져서 목록이 비지 않도록 정리
       const f = useFilter.getState();
@@ -84,18 +87,24 @@ export default function App() {
       f.set({ files: f.files.filter((x) => files.has(x)), kinds: f.kinds.filter((k) => kinds.has(k)) });
 
       const messages = [...warnings];
-      if (includePlugins && !entries.some((e) => isPluginKind(e.kind))) messages.push("추출된 플러그인 데이터가 없습니다.");
+      if (changes.includePlugins && !entries.some((e) => isPluginKind(e.kind))) messages.push("추출된 플러그인 데이터가 없습니다.");
+      if (changes.detailed && !entries.some((e) => e.kind === "jsonData")) messages.push("추출된 외부 JSON 데이터가 없습니다.");
       if (messages.length) setNotice(messages.join("\n"));
     } catch (e) {
       setError(String(e));
     }
   }, []);
 
+  // 끌 때는 번역이 보존되므로 바로 적용하고, 켤 때만 위험성을 알린다
   const handleTogglePlugins = useCallback(() => {
-    // 끌 때는 번역이 보존되므로 바로 적용하고, 켤 때만 위험성을 알린다
-    if (useProject.getState().options.includePlugins) setIncludePlugins(false);
+    if (useProject.getState().options.includePlugins) changeOptions({ includePlugins: false });
     else setDialog("plugins");
-  }, [setIncludePlugins]);
+  }, [changeOptions]);
+
+  const handleToggleDetailed = useCallback(() => {
+    if (useProject.getState().options.detailed) changeOptions({ detailed: false });
+    else setDialog("detailed");
+  }, [changeOptions]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -117,7 +126,13 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <MenuBar onOpen={handleOpen} onSave={handleSave} onDialog={setDialog} onTogglePlugins={handleTogglePlugins} />
+      <MenuBar
+        onOpen={handleOpen}
+        onSave={handleSave}
+        onDialog={setDialog}
+        onTogglePlugins={handleTogglePlugins}
+        onToggleDetailed={handleToggleDetailed}
+      />
 
       {error && (
         <div className="flex items-start gap-2 border-b border-rose-900 bg-rose-950/60 px-3 py-1.5 text-sm text-rose-200">
@@ -165,7 +180,25 @@ export default function App() {
           onClose={close}
           onConfirm={() => {
             close();
-            setIncludePlugins(true);
+            changeOptions({ includePlugins: true });
+          }}
+        />
+      )}
+      {dialog === "locale" && project && (
+        <LocalePairsDialog
+          onClose={close}
+          onApply={(localePairs) => {
+            close();
+            changeOptions({ localePairs });
+          }}
+        />
+      )}
+      {dialog === "detailed" && project && (
+        <DetailedWarningDialog
+          onClose={close}
+          onConfirm={() => {
+            close();
+            changeOptions({ detailed: true });
           }}
         />
       )}

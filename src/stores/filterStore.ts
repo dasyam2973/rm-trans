@@ -16,6 +16,7 @@ const initial: FilterOptions = {
   files: [],
   kinds: [],
   glossaryIssues: false,
+  pinnedIds: null,
 };
 
 export const useFilter = create<FilterState>((set, get) => ({

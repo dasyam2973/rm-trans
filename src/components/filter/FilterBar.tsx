@@ -29,7 +29,7 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
       <div className="flex items-center gap-1">
         <input
           className={`${inputClass} w-72 ${error ? "border-rose-500" : ""}`}
-          placeholder={f.regex ? "정규식 검색" : "검색"}
+          placeholder={`${f.regex ? "정규식 검색" : "검색"}${f.scope === "path" ? " (예: Font Size)" : ""}`}
           value={f.query}
           onChange={(e) => f.set({ query: e.target.value })}
           title={error}
@@ -44,8 +44,9 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
 
       <select className={inputClass} value={f.scope} onChange={(e) => f.set({ scope: e.target.value as SearchScope })}>
         <option value="both">원문 + 번역문</option>
-        <option value="original">원문만</option>
-        <option value="translation">번역문만</option>
+        <option value="original">원문</option>
+        <option value="translation">번역문</option>
+        <option value="path">경로</option>
       </select>
 
       <div className="flex overflow-hidden rounded border border-zinc-700">
@@ -108,6 +109,18 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
       <span className="ml-auto text-xs text-zinc-400">
         {filtered.length.toLocaleString()} / {total.toLocaleString()}개
       </span>
+      <button
+        onClick={() => f.set({ pinnedIds: f.pinnedIds ? null : new Set(selected) })}
+        disabled={!f.pinnedIds && selected.size === 0}
+        title="켠 순간 선택되어 있던 항목만 표시합니다. 이후 선택을 해제해도 목록에서 사라지지 않습니다."
+        className={`rounded border px-2 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${
+          f.pinnedIds
+            ? "border-sky-500 bg-sky-600/40 text-sky-100"
+            : "border-zinc-700 text-zinc-400 hover:bg-zinc-800"
+        }`}
+      >
+        선택만 보기{f.pinnedIds && ` (${f.pinnedIds.size.toLocaleString()})`}
+      </button>
       <Button variant="ghost" onClick={() => setMany(filtered.map((e) => e.id), true)} disabled={filtered.length === 0}>
         결과 전체 선택
       </Button>

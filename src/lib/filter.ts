@@ -2,7 +2,10 @@ import type { Entry, Kind, Status } from "../types";
 import { glossaryIssues, type GlossaryMatcher } from "./glossary";
 import { statusOf, translationOf } from "./status";
 
-export type SearchScope = "both" | "original" | "translation";
+export type SearchScope = "both" | "original" | "translation" | "path";
+
+/** 경로 검색용: JSON Pointer 토큰 이스케이프(~1 → /, ~0 → ~)를 풀어 표시되는 키 이름 그대로 찾을 수 있게 한다 */
+const searchablePath = (path: string) => path.replace(/~1/g, "/").replace(/~0/g, "~");
 export type StatusFilter = "all" | Status;
 
 export interface FilterOptions {
@@ -17,6 +20,8 @@ export interface FilterOptions {
   kinds: Kind[];
   /** 단어장 용어가 지정한 번역대로 번역되지 않은 항목만 */
   glossaryIssues: boolean;
+  /** 선택한 항목만 보기: 켠 순간의 선택을 고정해 둔 ID 집합 (null이면 꺼짐). 이후 선택을 바꿔도 목록은 그대로 */
+  pinnedIds: Set<string> | null;
 }
 
 export type Matcher = { test: (s: string) => boolean; error?: undefined } | { test?: undefined; error: string };
@@ -48,16 +53,18 @@ export function filterEntries(
   const kinds = opts.kinds.length ? new Set(opts.kinds) : null;
 
   const result = entries.filter((e) => {
+    if (opts.pinnedIds && !opts.pinnedIds.has(e.id)) return false;
     if (files && !files.has(e.file)) return false;
     if (kinds && !kinds.has(e.kind)) return false;
     if (opts.status !== "all" && statusOf(e, translations, overrides) !== opts.status) return false;
     // 단어장이 비면 토글 버튼이 숨겨지므로 필터도 무시한다
     if (opts.glossaryIssues && glossary.size > 0 && glossaryIssues(e, translations, glossary).length === 0) return false;
     if (matcher?.test) {
-      const t = translationOf(e, translations);
       const hit =
-        (opts.scope !== "translation" && matcher.test(e.original)) ||
-        (opts.scope !== "original" && matcher.test(t));
+        opts.scope === "path"
+          ? matcher.test(searchablePath(e.path))
+          : (opts.scope !== "translation" && matcher.test(e.original)) ||
+            (opts.scope !== "original" && matcher.test(translationOf(e, translations)));
       if (!hit) return false;
     }
     return true;

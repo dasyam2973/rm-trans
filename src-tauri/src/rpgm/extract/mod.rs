@@ -2,6 +2,8 @@
 
 mod database;
 mod events;
+mod json_files;
+mod locale;
 mod map;
 mod plugins;
 mod system;
@@ -14,6 +16,7 @@ use serde::Serialize;
 use crate::error::{Error, Result};
 use crate::jsonspan::{self, Node};
 use crate::model::{Entry, Kind};
+use crate::store::ProjectOptions;
 
 use super::detect::GameLayout;
 use super::plugins_js;
@@ -38,9 +41,15 @@ pub(crate) struct Sink<'a> {
     out: &'a mut Vec<Entry>,
     /// 플러그인 커맨드 인자도 추출할지
     plugins: bool,
+    /// 세부 수정: 플러그인 데이터에서 숫자/불리언 같은 값도 걸러내지 않는다
+    detailed: bool,
 }
 
-impl Sink<'_> {
+impl<'a> Sink<'a> {
+    fn new(file: &'a str, out: &'a mut Vec<Entry>, options: &ProjectOptions) -> Self {
+        Sink { file, out, plugins: options.include_plugins, detailed: options.detailed }
+    }
+
     /// 그룹 ID는 그룹의 기준이 되는 노드 경로로 만든다.
     pub fn group_id(&self, anchor: &str) -> String {
         format!("{}#{}", self.file, anchor)
@@ -69,6 +78,7 @@ impl Sink<'_> {
             group_label: group_label.to_string(),
             context: context.filter(|c| !c.is_empty()).map(str::to_string),
             original: text.to_string(),
+            initial: None,
         });
     }
 }
@@ -79,8 +89,9 @@ pub(crate) fn read_json(layout: &GameLayout, name: &str) -> Result<Node> {
     jsonspan::parse(&text).map_err(|e| Error::Parse { path: layout.rel_file(name), msg: e.to_string() })
 }
 
-/// `include_plugins`: 플러그인 파라미터(js/plugins.js)와 플러그인 커맨드 인자도 추출할지
-pub fn extract_all(layout: &GameLayout, include_plugins: bool) -> Result<Extracted> {
+/// `options.include_plugins`: 플러그인 파라미터(js/plugins.js)와 플러그인 커맨드 인자도 추출할지
+/// `options.detailed`: 그 밖의 JSON 파일도 추출하고, 플러그인 값도 거르지 않는다
+pub fn extract_all(layout: &GameLayout, options: &ProjectOptions) -> Result<Extracted> {
     let data_dir = layout.data_dir();
     let mut map_files: Vec<String> = fs::read_dir(&data_dir)
         .map_err(|e| Error::io(&data_dir, e))?
@@ -109,7 +120,7 @@ pub fn extract_all(layout: &GameLayout, include_plugins: bool) -> Result<Extract
         }
         let root = read_json(layout, &name)?;
         let file = layout.rel_file(&name);
-        let mut sink = Sink { file: &file, out: &mut out, plugins: include_plugins };
+        let mut sink = Sink::new(&file, &mut out, options);
         match *stem {
             "System" => system::extract(&root, &mut sink),
             "Troops" => database::extract_troops(&root, &mut sink),
@@ -121,21 +132,35 @@ pub fn extract_all(layout: &GameLayout, include_plugins: bool) -> Result<Extract
     for name in &map_files {
         let root = read_json(layout, name)?;
         let file = layout.rel_file(name);
-        let mut sink = Sink { file: &file, out: &mut out, plugins: include_plugins };
+        let mut sink = Sink::new(&file, &mut out, options);
         map::extract(name, &root, &map_names, &mut sink);
     }
 
-    if include_plugins {
-        if let Err(msg) = extract_plugins_js(layout, &mut out) {
+    if options.include_plugins {
+        if let Err(msg) = extract_plugins_js(layout, &mut out, options) {
             warnings.push(msg);
         }
+    }
+
+    locale::extract_all(layout, &mut out, &mut warnings, options);
+
+    if options.detailed {
+        json_files::extract_all(layout, &mut out, &mut warnings, options);
     }
 
     Ok(Extracted { entries: out, warnings })
 }
 
+/// RPG Maker가 기본으로 쓰는 data 폴더 파일인지 (세부 수정의 외부 JSON 추출에서 제외)
+pub(crate) fn is_standard_data_file(name: &str) -> bool {
+    map::is_map_file(name)
+        || name.strip_suffix(".json").is_some_and(|stem| {
+            DB_ORDER.contains(&stem) || matches!(stem, "MapInfos" | "Animations" | "Tilesets")
+        })
+}
+
 /// js/plugins.js의 플러그인 파라미터. 파일이 없으면 조용히 넘어가고, 읽을 수 없으면 경고 메시지를 돌려준다.
-fn extract_plugins_js(layout: &GameLayout, out: &mut Vec<Entry>) -> std::result::Result<(), String> {
+fn extract_plugins_js(layout: &GameLayout, out: &mut Vec<Entry>, options: &ProjectOptions) -> std::result::Result<(), String> {
     let Some(file) = layout.plugins_rel() else { return Ok(()) };
     let path = file.split('/').fold(layout.root.clone(), |p, part| p.join(part));
     if !path.is_file() {
@@ -144,6 +169,6 @@ fn extract_plugins_js(layout: &GameLayout, out: &mut Vec<Entry>) -> std::result:
     let text = fs::read_to_string(&path).map_err(|e| format!("{file}: {e}"))?;
     let range = plugins_js::json_range(&text).ok_or_else(|| format!("{file}: $plugins 배열을 찾을 수 없습니다."))?;
     let root = jsonspan::parse(&text[range]).map_err(|e| format!("{file}: {e}"))?;
-    plugins::extract(&root, &mut Sink { file: &file, out, plugins: true });
+    plugins::extract(&root, &mut Sink::new(&file, out, options));
     Ok(())
 }

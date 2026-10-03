@@ -13,10 +13,15 @@ export type Kind =
   | "choice"
   | "displayName"
   | "pluginParam"
-  | "pluginCommand";
+  | "pluginCommand"
+  | "jsonData"
+  | "locale";
 
-/** 잘못 번역하면 게임이 깨질 수 있는 플러그인 데이터인지 */
+/** 플러그인 데이터인지 */
 export const isPluginKind = (k: Kind) => k === "pluginParam" || k === "pluginCommand";
+
+/** 잘못 번역하면 게임이 깨질 수 있는 데이터인지 (플러그인 데이터, 세부 수정의 외부 JSON) */
+export const isRiskyKind = (k: Kind) => isPluginKind(k) || k === "jsonData";
 
 export interface Entry {
   /** "{file}#{pointer}" */
@@ -28,6 +33,8 @@ export interface Entry {
   groupLabel: string;
   context?: string;
   original: string;
+  /** 언어 파일 쌍의 대상 파일에 이미 있던 값. 저장된 번역이 없으면 번역으로 채운다 */
+  initial?: string;
 }
 
 export type Status = "translated" | "untranslated";
@@ -40,6 +47,17 @@ export interface SavedEntry {
 export interface ProjectOptions {
   /** 플러그인 파라미터/커맨드도 추출할지 */
   includePlugins: boolean;
+  /** 세부 수정: 게임 폴더의 다른 JSON 파일도 추출하고, 플러그인 데이터의 숫자/불리언 같은 값도 걸러내지 않는다 */
+  detailed: boolean;
+  /** 번역 플러그인의 언어 파일 쌍 */
+  localePairs: LocalePair[];
+}
+
+/** 원본 언어 파일 → 대상 언어 파일 (게임 루트 기준 상대 경로, '/' 구분).
+ * 원본 파일 구조로 항목을 만들고, 내보낼 때 원본에 번역을 적용해 대상 파일로 쓴다 (누락된 항목은 원본 언어로 채워짐) */
+export interface LocalePair {
+  source: string;
+  target: string;
 }
 
 /** 단어장 항목. 인명/고유명사 등을 일관되게 번역하도록 AI 요청에 함께 보낸다 */
@@ -155,4 +173,6 @@ export const KIND_LABELS: Record<Kind, string> = {
   displayName: "맵 표시명",
   pluginParam: "플러그인 파라미터",
   pluginCommand: "플러그인 커맨드",
+  jsonData: "JSON 데이터",
+  locale: "언어 파일",
 };

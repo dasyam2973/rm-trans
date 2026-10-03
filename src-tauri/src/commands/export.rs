@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use crate::error::{Error, Result};
 use crate::rpgm::apply;
-use crate::store::WORK_DIR;
+use crate::store::{LocalePair, WORK_DIR};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,19 +22,29 @@ pub struct ExportReport {
 /// 게임 폴더 전체를 dest로 복사한 뒤 번역문을 적용한다. 원본 폴더는 건드리지 않는다.
 /// `translations`: 아이템 ID("{file}#{pointer}") → 번역문 (원문과 다른 것만 보내면 된다)
 /// `translated_only`: true면 전체 복사 없이 번역이 실제로 적용된 파일만 같은 상대 경로로 dest에 쓴다.
+/// `locale_pairs`: 대상 언어 파일은 원본 언어 파일에 번역을 적용해 만들고, 번역이 없어도 항상 쓴다.
 #[tauri::command]
 pub async fn export_project(
     root: String,
     dest: String,
     translations: HashMap<String, String>,
     translated_only: bool,
+    locale_pairs: Vec<LocalePair>,
 ) -> Result<ExportReport> {
-    tauri::async_runtime::spawn_blocking(move || export(Path::new(&root), Path::new(&dest), translations, translated_only))
-        .await
-        .expect("export_project 작업 패닉")
+    tauri::async_runtime::spawn_blocking(move || {
+        export(Path::new(&root), Path::new(&dest), translations, translated_only, &locale_pairs)
+    })
+    .await
+    .expect("export_project 작업 패닉")
 }
 
-fn export(root: &Path, dest: &Path, translations: HashMap<String, String>, translated_only: bool) -> Result<ExportReport> {
+fn export(
+    root: &Path,
+    dest: &Path,
+    translations: HashMap<String, String>,
+    translated_only: bool,
+    locale_pairs: &[LocalePair],
+) -> Result<ExportReport> {
     let root = root.canonicalize().map_err(|e| Error::io(root, e))?;
     if dest.exists() {
         let mut it = fs::read_dir(dest).map_err(|e| Error::io(dest, e))?;
@@ -58,17 +68,28 @@ fn export(root: &Path, dest: &Path, translations: HashMap<String, String>, trans
             by_file.entry(file.to_string()).or_default().push((pointer.to_string(), text));
         }
     }
+    // 언어 파일 쌍: 대상 파일 → 원본 언어 파일. 번역이 없어도 누락된 항목을 채우도록 항상 쓴다
+    let locale_sources: HashMap<&str, &str> = locale_pairs.iter().map(|p| (p.target.as_str(), p.source.as_str())).collect();
+    for target in locale_sources.keys() {
+        by_file.entry(target.to_string()).or_default();
+    }
 
     let mut report = ExportReport { files_copied, files_patched: 0, strings_applied: 0, skipped: Vec::new() };
     for (file, patches) in by_file {
         // canonicalize된 Windows 경로(\\?\)는 '/'를 구분자로 인식하지 않으므로 구성 요소별로 붙인다
+        let in_root = |rel: &str| rel.split('/').fold(root.clone(), |p, part| p.join(part));
         let path = file.split('/').fold(dest.clone(), |p, part| p.join(part));
+        let locale_source = locale_sources.get(file.as_str());
         // 번역 파일만 내보낼 때는 복사본이 없으므로 원본에서 읽는다
-        let src_path = if translated_only { file.split('/').fold(root.clone(), |p, part| p.join(part)) } else { path.clone() };
+        let src_path = match locale_source {
+            Some(source) => in_root(source),
+            None if translated_only => in_root(&file),
+            None => path.clone(),
+        };
         let src = fs::read_to_string(&src_path).map_err(|e| Error::io(&src_path, e))?;
         let result = apply::patch_file(&file, &src, &patches).map_err(|msg| Error::Parse { path: file.clone(), msg })?;
         report.skipped.extend(result.skipped.into_iter().map(|p| format!("{file}#{p}")));
-        if result.applied > 0 {
+        if result.applied > 0 || locale_source.is_some() {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
             }
@@ -102,6 +123,7 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<usize> {
 mod tests {
     use super::*;
     use crate::rpgm::{detect, extract};
+    use crate::store::{LocalePair, ProjectOptions};
 
     #[test]
     fn extract_then_export_roundtrip() {
@@ -124,7 +146,7 @@ mod tests {
 
         let layout = detect::detect(&game).unwrap();
         assert_eq!(layout.data_rel, "www/data");
-        let entries = extract::extract_all(&layout, false).unwrap().entries;
+        let entries = extract::extract_all(&layout, &ProjectOptions::default()).unwrap().entries;
         let originals: Vec<_> = entries.iter().map(|e| e.original.as_str()).collect();
         assert_eq!(
             originals,
@@ -144,7 +166,7 @@ mod tests {
             (id("ハロルド"), "해롤드".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, false).unwrap();
+        let report = export(&game, &dest, translations, false, &[]).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
         assert!(!dest.join(WORK_DIR).exists());
@@ -171,8 +193,8 @@ mod tests {
 
         let layout = detect::detect(&game).unwrap();
         assert_eq!(layout.plugins_rel().as_deref(), Some("js/plugins.js"));
-        assert_eq!(extract::extract_all(&layout, false).unwrap().entries.len(), 1);
-        let ex = extract::extract_all(&layout, true).unwrap();
+        assert_eq!(extract::extract_all(&layout, &ProjectOptions::default()).unwrap().entries.len(), 1);
+        let ex = extract::extract_all(&layout, &ProjectOptions { include_plugins: true, ..Default::default() }).unwrap();
         assert!(ex.warnings.is_empty());
         let originals: Vec<_> = ex.entries.iter().map(|e| e.original.as_str()).collect();
         assert_eq!(originals, ["勇者", "ようこそ", "メニュー", "回復"]);
@@ -184,7 +206,7 @@ mod tests {
             (id("回復"), "회복".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, false).unwrap();
+        let report = export(&game, &dest, translations, false, &[]).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
 
@@ -192,6 +214,83 @@ mod tests {
         assert_eq!(out, plugins.replace("メニュー", "메뉴").replace("回復", "회복"));
         let out_ce = fs::read_to_string(dest.join("data/CommonEvents.json")).unwrap();
         assert!(out_ce.contains(r#"{"text":"어서 오세요","id":"5"}"#));
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn detailed_json_roundtrip() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-detailed-{}", std::process::id()));
+        let game = base.join("game");
+        fs::create_dir_all(game.join("data")).unwrap();
+        fs::write(game.join("data/System.json"), r#"{"gameTitle":"勇者"}"#).unwrap();
+        let quests = "{\n  \"list\": [{\"title\": \"薬草集め\", \"reward\": 1.50}],\n  \"size\": \"28\"\n}";
+        fs::write(game.join("data/Quests.json"), quests).unwrap();
+
+        let layout = detect::detect(&game).unwrap();
+        assert_eq!(extract::extract_all(&layout, &ProjectOptions::default()).unwrap().entries.len(), 1);
+        let ex = extract::extract_all(&layout, &ProjectOptions { detailed: true, ..Default::default() }).unwrap();
+        assert!(ex.warnings.is_empty());
+        let originals: Vec<_> = ex.entries.iter().map(|e| e.original.as_str()).collect();
+        assert_eq!(originals, ["勇者", "薬草集め", "28"]);
+
+        let id = |o: &str| ex.entries.iter().find(|e| e.original == o).unwrap().id.clone();
+        let translations = HashMap::from([(id("薬草集め"), "약초 모으기".to_string()), (id("28"), "24".to_string())]);
+        let dest = base.join("out");
+        let report = export(&game, &dest, translations, true, &[]).unwrap();
+        assert_eq!(report.strings_applied, 2);
+        let out = fs::read_to_string(dest.join("data/Quests.json")).unwrap();
+        assert_eq!(out, quests.replace("薬草集め", "약초 모으기").replace("\"28\"", "\"24\""));
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn locale_pair_roundtrip() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-locale-{}", std::process::id()));
+        let game = base.join("game");
+        fs::create_dir_all(game.join("data")).unwrap();
+        fs::create_dir_all(game.join("locales")).unwrap();
+        fs::write(game.join("data/System.json"), r#"{"gameTitle":"勇者"}"#).unwrap();
+        let ja = "{\n  \"menu\": {\"title\": \"メニュー\", \"help\": \"ヘルプ\", \"size\": 28},\n  \"items\": [\"剣\", \"盾\"]\n}";
+        fs::write(game.join("locales/ja.json"), ja).unwrap();
+        // help는 누락, 盾은 빈 값, old는 원본에 없는 항목
+        fs::write(game.join("locales/ko.json"), r#"{"menu":{"title":"메뉴"},"items":["검",""],"old":"옛날"}"#).unwrap();
+
+        let pairs = vec![LocalePair { source: "locales/ja.json".into(), target: "locales/ko.json".into() }];
+        let options = ProjectOptions { locale_pairs: pairs.clone(), detailed: true, ..Default::default() };
+        let layout = detect::detect(&game).unwrap();
+        let ex = extract::extract_all(&layout, &options).unwrap();
+        assert_eq!(ex.warnings.len(), 1, "{:?}", ex.warnings);
+        assert!(ex.warnings[0].contains("1개"));
+        // 세부 수정이 켜져 있어도 쌍에 쓰인 파일은 JSON 데이터로 따로 나오지 않는다
+        let got: Vec<_> = ex.entries[1..].iter().map(|e| (e.id.as_str(), e.original.as_str(), e.initial.as_deref())).collect();
+        assert_eq!(
+            got,
+            [
+                ("locales/ko.json#/menu/title", "メニュー", Some("메뉴")),
+                ("locales/ko.json#/menu/help", "ヘルプ", None),
+                ("locales/ko.json#/items/0", "剣", Some("검")),
+                ("locales/ko.json#/items/1", "盾", None),
+            ]
+        );
+
+        // 번역이 하나도 없어도 대상 파일은 원본 언어로 채워서 만든다
+        let report = export(&game, &base.join("out0"), HashMap::new(), true, &pairs).unwrap();
+        assert_eq!(report.files_patched, 1);
+        assert_eq!(fs::read_to_string(base.join("out0/locales/ko.json")).unwrap(), ja);
+
+        let translations = HashMap::from([
+            ("locales/ko.json#/menu/title".to_string(), "메뉴".to_string()),
+            ("locales/ko.json#/items/0".to_string(), "검".to_string()),
+        ]);
+        let dest = base.join("out");
+        let report = export(&game, &dest, translations, false, &pairs).unwrap();
+        assert_eq!(report.strings_applied, 2);
+        let out = fs::read_to_string(dest.join("locales/ko.json")).unwrap();
+        assert_eq!(out, ja.replace("メニュー", "메뉴").replace("剣", "검"));
+        // 원본 언어 파일은 그대로 복사된다
+        assert_eq!(fs::read_to_string(dest.join("locales/ja.json")).unwrap(), ja);
 
         fs::remove_dir_all(&base).ok();
     }
@@ -209,10 +308,10 @@ mod tests {
         fs::write(data.join("Actors.json"), actors).unwrap();
 
         let layout = detect::detect(&game).unwrap();
-        let entries = extract::extract_all(&layout, false).unwrap().entries;
+        let entries = extract::extract_all(&layout, &ProjectOptions::default()).unwrap().entries;
         let id = entries.iter().find(|e| e.original == "ハロルド").unwrap().id.clone();
         let dest = base.join("out");
-        let report = export(&game, &dest, HashMap::from([(id, "해롤드".to_string())]), true).unwrap();
+        let report = export(&game, &dest, HashMap::from([(id, "해롤드".to_string())]), true, &[]).unwrap();
         assert_eq!(report.files_copied, 0);
         assert_eq!(report.files_patched, 1);
         assert_eq!(report.strings_applied, 1);

@@ -3,7 +3,7 @@ import { aiCancel, aiTranslate, getAiSettings, onAiProgress, onAiResult } from "
 import { statusOf } from "../../lib/status";
 import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
-import { isPluginKind, type AiSummary, type Entry } from "../../types";
+import { isRiskyKind, type AiSummary, type Entry } from "../../types";
 import { Button, Dialog } from "../ui";
 
 type Scope = "selected" | "filteredUntranslated" | "filtered";
@@ -17,7 +17,7 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
   const [summary, setSummary] = useState<AiSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // 플러그인 데이터는 AI가 식별자까지 번역하기 쉬워서 기본으로 제외한다
+  // 플러그인/외부 JSON 데이터는 AI가 식별자까지 번역하기 쉬워서 기본으로 제외한다
   const [excludePlugins, setExcludePlugins] = useState(true);
 
   const scoped = useMemo(() => {
@@ -31,9 +31,9 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
         return filtered;
     }
   }, [scope, entries, selected, filtered, translations, overrides]);
-  const pluginCount = useMemo(() => scoped.filter((e) => isPluginKind(e.kind)).length, [scoped]);
+  const pluginCount = useMemo(() => scoped.filter((e) => isRiskyKind(e.kind)).length, [scoped]);
   const targets = useMemo(
-    () => (excludePlugins && pluginCount > 0 ? scoped.filter((e) => !isPluginKind(e.kind)) : scoped),
+    () => (excludePlugins && pluginCount > 0 ? scoped.filter((e) => !isRiskyKind(e.kind)) : scoped),
     [scoped, excludePlugins, pluginCount],
   );
 
@@ -128,7 +128,7 @@ export function AiTranslateDialog({ filtered, onClose }: { filtered: Entry[]; on
               disabled={running}
               onChange={(e) => setExcludePlugins(e.target.checked)}
             />
-            플러그인 데이터 제외 ({pluginCount.toLocaleString()}개)
+            플러그인·JSON 데이터 제외 ({pluginCount.toLocaleString()}개)
           </label>
           {!excludePlugins && (
             <p className="mt-1 text-xs text-amber-300/80">

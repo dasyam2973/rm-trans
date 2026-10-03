@@ -32,6 +32,20 @@ pub struct SavedEntry {
 pub struct ProjectOptions {
     /// 플러그인 파라미터/커맨드도 추출할지
     pub include_plugins: bool,
+    /// 세부 수정: 게임 폴더의 다른 JSON 파일도 추출하고, 플러그인 데이터의 숫자/불리언 같은 값도 걸러내지 않는다
+    pub detailed: bool,
+    /// 번역 플러그인의 언어 파일 쌍
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub locale_pairs: Vec<LocalePair>,
+}
+
+/// 번역 플러그인의 언어별 JSON 파일 쌍. 경로는 게임 루트 기준 ('/' 구분).
+/// 원본 언어 파일의 구조로 항목을 만들고, 내보낼 때 원본 파일에 번역을 적용해 대상 파일로 쓴다.
+/// 대상 파일에서 빠져 있던 항목은 원본 언어로 채워진다.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalePair {
+    pub source: String,
+    pub target: String,
 }
 
 /// 단어장 항목. 인명/고유명사 등을 일관되게 번역하도록 AI 요청에 함께 보낸다.

@@ -34,14 +34,16 @@ interface ProjectState {
   exportMap: () => Record<string, string>;
 }
 
-const DEFAULT_OPTIONS: ProjectOptions = { includePlugins: false };
+const DEFAULT_OPTIONS: ProjectOptions = { includePlugins: false, detailed: false, localePairs: [] };
 
-/** 저장된 항목을 현재 아이템 목록 기준으로 번역문/상태/고아 항목으로 나눈다. */
+/** 저장된 항목을 현재 아이템 목록 기준으로 번역문/상태/고아 항목으로 나눈다.
+ * 저장된 항목이 없으면 언어 파일에 이미 있던 값(initial)을 번역으로 쓴다. */
 function distribute(entries: Entry[], saved: Record<string, SavedEntry>) {
   const entryById = new Map(entries.map((e) => [e.id, e]));
   const translations: Record<string, string> = {};
   const overrides: Record<string, Status> = {};
   const orphans: Record<string, SavedEntry> = {};
+  for (const e of entries) if (e.initial !== undefined && !(e.id in saved)) translations[e.id] = e.initial;
   for (const [id, s] of Object.entries(saved)) {
     const entry = entryById.get(id);
     if (!entry) {
@@ -108,8 +110,10 @@ export const useProject = create<ProjectState>((set, get) => ({
   markSaved: () => set({ dirty: false }),
 
   toProjectFile: () => {
-    const { translations, overrides, orphans, options, glossary } = get();
+    const { entries: list, translations, overrides, orphans, options, glossary } = get();
     const entries: Record<string, SavedEntry> = { ...orphans };
+    // 언어 파일의 기존 값을 원문으로 되돌린 경우, 다시 열 때 기존 값이 채워지지 않도록 원문을 번역으로 기록해 둔다
+    for (const e of list) if (e.initial !== undefined && !(e.id in translations)) entries[e.id] = { translation: e.original };
     for (const [id, translation] of Object.entries(translations)) entries[id] = { translation };
     for (const [id, status] of Object.entries(overrides)) entries[id] = { ...entries[id], status };
     return { version: 1, entries, options, glossary };

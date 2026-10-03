@@ -18,6 +18,10 @@ pub enum Kind {
     PluginParam,
     /// 이벤트의 플러그인 커맨드 인자 (MZ 357)
     PluginCommand,
+    /// 세부 수정 모드에서 추출하는 그 밖의 JSON 파일(플러그인 전용 데이터 등)의 값
+    JsonData,
+    /// 번역 플러그인의 언어 파일 값
+    Locale,
 }
 
 /// 번역 가능한 문자열 하나. 원본 JSON의 문자열 값 하나와 1:1로 대응한다.
@@ -38,6 +42,9 @@ pub struct Entry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     pub original: String,
+    /// 언어 파일 쌍의 대상 파일에 이미 있던 값 (원문과 다를 때만). 저장된 번역이 없으면 번역으로 채운다
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
