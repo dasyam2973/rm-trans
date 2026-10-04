@@ -1,5 +1,15 @@
 import { create } from "zustand";
-import type { Engine, Entry, GlossaryTerm, OpenedProject, ProjectFile, ProjectOptions, SavedEntry, Status } from "../types";
+import type {
+  Engine,
+  Entry,
+  GlossaryTerm,
+  OpenedProject,
+  ProjectFile,
+  ProjectOptions,
+  SavedEntry,
+  Scheme,
+  Status,
+} from "../types";
 
 interface ProjectInfo {
   root: string;
@@ -20,6 +30,8 @@ interface ProjectState {
   orphans: Record<string, SavedEntry>;
   /** 인명/고유명사 단어장 */
   glossary: GlossaryTerm[];
+  /** 사용자가 직접 입력한 리소스 암호화 키 (방식별 실제 키 hex) */
+  assetKeys: Partial<Record<Scheme, string>>;
   dirty: boolean;
 
   load: (p: OpenedProject) => void;
@@ -28,6 +40,8 @@ interface ProjectState {
   setTranslations: (updates: Record<string, string>, opts?: { clearOverride?: boolean }) => void;
   setOverrides: (ids: string[], status: Status | null) => void;
   setGlossary: (glossary: GlossaryTerm[]) => void;
+  /** key가 null이면 감지한 키로 되돌린다 */
+  setAssetKey: (scheme: Scheme, key: string | null) => void;
   markSaved: () => void;
   toProjectFile: () => ProjectFile;
   /** 내보내기용: 원문과 다른 번역문 전체 */
@@ -65,6 +79,7 @@ export const useProject = create<ProjectState>((set, get) => ({
   overrides: {},
   orphans: {},
   glossary: [],
+  assetKeys: {},
   dirty: false,
 
   load: (p) => {
@@ -73,6 +88,7 @@ export const useProject = create<ProjectState>((set, get) => ({
       options: { ...DEFAULT_OPTIONS, ...p.saved?.options },
       ...distribute(p.entries, p.saved?.entries ?? {}),
       glossary: p.saved?.glossary ?? [],
+      assetKeys: Object.fromEntries((p.saved?.assetKeys ?? []).map((k) => [k.scheme, k.key])),
       dirty: false,
     });
   },
@@ -107,16 +123,24 @@ export const useProject = create<ProjectState>((set, get) => ({
 
   setGlossary: (glossary) => set({ glossary, dirty: true }),
 
+  setAssetKey: (scheme, key) => {
+    const assetKeys = { ...get().assetKeys };
+    if (key) assetKeys[scheme] = key;
+    else delete assetKeys[scheme];
+    set({ assetKeys, dirty: true });
+  },
+
   markSaved: () => set({ dirty: false }),
 
   toProjectFile: () => {
-    const { entries: list, translations, overrides, orphans, options, glossary } = get();
+    const { entries: list, translations, overrides, orphans, options, glossary, assetKeys } = get();
     const entries: Record<string, SavedEntry> = { ...orphans };
     // 언어 파일의 기존 값을 원문으로 되돌린 경우, 다시 열 때 기존 값이 채워지지 않도록 원문을 번역으로 기록해 둔다
     for (const e of list) if (e.initial !== undefined && !(e.id in translations)) entries[e.id] = { translation: e.original };
     for (const [id, translation] of Object.entries(translations)) entries[id] = { translation };
     for (const [id, status] of Object.entries(overrides)) entries[id] = { ...entries[id], status };
-    return { version: 1, entries, options, glossary };
+    const keys = Object.entries(assetKeys).map(([scheme, key]) => ({ scheme: scheme as Scheme, key: key! }));
+    return { version: 1, entries, options, glossary, assetKeys: keys };
   },
 
   exportMap: () => ({ ...get().translations }),

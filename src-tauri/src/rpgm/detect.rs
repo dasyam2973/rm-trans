@@ -29,10 +29,21 @@ impl GameLayout {
         }
     }
 
-    /// js/plugins.js의 루트 기준 상대 경로. data 폴더 자체를 연 경우에는 js 폴더가 루트 밖이라 없음
+    /// data/js/img/audio가 들어 있는 폴더의 루트 기준 상대 경로 ("www" 또는 루트면 "").
+    /// data 폴더 자체를 연 경우에는 루트 밖이라 없음
+    pub fn web_rel(&self) -> Option<&str> {
+        Some(self.data_rel.strip_suffix("data")?.trim_end_matches('/'))
+    }
+
+    /// web 폴더 안의 상대 경로를 루트 기준으로 변환
+    pub fn web_file(&self, name: &str) -> Option<String> {
+        let web = self.web_rel()?;
+        Some(if web.is_empty() { name.to_string() } else { format!("{web}/{name}") })
+    }
+
+    /// js/plugins.js의 루트 기준 상대 경로
     pub fn plugins_rel(&self) -> Option<String> {
-        let parent = self.data_rel.strip_suffix("data")?.trim_end_matches('/');
-        Some(if parent.is_empty() { "js/plugins.js".to_string() } else { format!("{parent}/js/plugins.js") })
+        self.web_file("js/plugins.js")
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "rm-trans"
-version = "0.1.4"
+version = "0.1.5"
 description = "RPG Maker MV/MZ translation tool"
 authors = ["you"]
 edition = "2021"
@@ -27,6 +27,7 @@ thiserror = "2.0.21"
 futures = "0.3.34"
 reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
 tokio = { version = "1.53.1", features = ["time", "sync", "macros"] }
+md-5 = "0.11.0"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

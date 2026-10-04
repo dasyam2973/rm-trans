@@ -75,6 +75,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
           <p>
             번역 적용: {report.filesPatched}개 파일, {report.stringsApplied.toLocaleString()}개 문자열
           </p>
+          {report.imagesApplied > 0 && <p>번역 이미지: {report.imagesApplied.toLocaleString()}개 파일</p>}
           {report.skipped.length > 0 && (
             <details className="text-amber-400">
               <summary>적용하지 못한 항목 {report.skipped.length}개</summary>

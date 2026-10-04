@@ -16,3 +16,15 @@ body,
 body {
   @apply bg-zinc-950 text-zinc-200;
 }
+
+/* 투명 이미지 미리보기 배경 */
+.checkerboard {
+  background-color: #3f3f46;
+  background-image:
+    linear-gradient(45deg, #27272a 25%, transparent 25%),
+    linear-gradient(-45deg, #27272a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #27272a 75%),
+    linear-gradient(-45deg, transparent 75%, #27272a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}

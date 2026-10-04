@@ -7,6 +7,7 @@ use walkdir::WalkDir;
 
 use crate::error::{Error, Result};
 use crate::rpgm::apply;
+use crate::rpgm::assets::{self, join_rel};
 use crate::store::{LocalePair, WORK_DIR};
 
 #[derive(Serialize)]
@@ -15,7 +16,9 @@ pub struct ExportReport {
     pub files_copied: usize,
     pub files_patched: usize,
     pub strings_applied: usize,
-    /// 적용하지 못한 아이템 ID
+    /// 번역 이미지를 쓴 파일 수
+    pub images_applied: usize,
+    /// 적용하지 못한 아이템 ID, 번역 이미지 오류
     pub skipped: Vec<String>,
 }
 
@@ -45,20 +48,7 @@ fn export(
     translated_only: bool,
     locale_pairs: &[LocalePair],
 ) -> Result<ExportReport> {
-    let root = root.canonicalize().map_err(|e| Error::io(root, e))?;
-    if dest.exists() {
-        let mut it = fs::read_dir(dest).map_err(|e| Error::io(dest, e))?;
-        if it.next().is_some() {
-            return Err(Error::msg(format!("대상 폴더가 비어 있지 않습니다: {}", dest.display())));
-        }
-    }
-    fs::create_dir_all(dest).map_err(|e| Error::io(dest, e))?;
-    let dest = dest.canonicalize().map_err(|e| Error::io(dest, e))?;
-    if dest.starts_with(&root) {
-        fs::remove_dir(&dest).ok();
-        return Err(Error::msg("원본 폴더 안에는 저장할 수 없습니다."));
-    }
-
+    let (root, dest) = prepare_dest(root, dest)?;
     let files_copied = if translated_only { 0 } else { copy_tree(&root, &dest)? };
 
     // 파일별로 묶어서 한 번씩만 읽고 쓴다
@@ -74,11 +64,11 @@ fn export(
         by_file.entry(target.to_string()).or_default();
     }
 
-    let mut report = ExportReport { files_copied, files_patched: 0, strings_applied: 0, skipped: Vec::new() };
+    let mut report =
+        ExportReport { files_copied, files_patched: 0, strings_applied: 0, images_applied: 0, skipped: Vec::new() };
     for (file, patches) in by_file {
-        // canonicalize된 Windows 경로(\\?\)는 '/'를 구분자로 인식하지 않으므로 구성 요소별로 붙인다
-        let in_root = |rel: &str| rel.split('/').fold(root.clone(), |p, part| p.join(part));
-        let path = file.split('/').fold(dest.clone(), |p, part| p.join(part));
+        let in_root = |rel: &str| join_rel(&root, rel);
+        let path = join_rel(&dest, &file);
         let locale_source = locale_sources.get(file.as_str());
         // 번역 파일만 내보낼 때는 복사본이 없으므로 원본에서 읽는다
         let src_path = match locale_source {
@@ -98,7 +88,43 @@ fn export(
             report.strings_applied += result.applied;
         }
     }
+
+    // 번역 이미지: 원본 리소스 경로에 (암호화됐다면 같은 방식으로 재암호화해) 덮어쓴다
+    for plain in assets::list_replacements(&root) {
+        match assets::build_replacement(&root, &plain) {
+            Ok(targets) => {
+                for (rel, bytes) in targets {
+                    let path = join_rel(&dest, &rel);
+                    if let Some(parent) = path.parent() {
+                        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+                    }
+                    fs::write(&path, bytes).map_err(|e| Error::io(&path, e))?;
+                    report.images_applied += 1;
+                }
+            }
+            Err(e) => report.skipped.push(e.to_string()),
+        }
+    }
     Ok(report)
+}
+
+/// 내보낼 폴더를 확인하고 만든다. 비어 있어야 하고 원본 폴더 밖이어야 한다.
+/// canonicalize한 (원본, 대상) 경로를 돌려준다.
+pub(crate) fn prepare_dest(root: &Path, dest: &Path) -> Result<(PathBuf, PathBuf)> {
+    let root = root.canonicalize().map_err(|e| Error::io(root, e))?;
+    if dest.exists() {
+        let mut it = fs::read_dir(dest).map_err(|e| Error::io(dest, e))?;
+        if it.next().is_some() {
+            return Err(Error::msg(format!("대상 폴더가 비어 있지 않습니다: {}", dest.display())));
+        }
+    }
+    fs::create_dir_all(dest).map_err(|e| Error::io(dest, e))?;
+    let dest = dest.canonicalize().map_err(|e| Error::io(dest, e))?;
+    if dest.starts_with(&root) {
+        fs::remove_dir(&dest).ok();
+        return Err(Error::msg("원본 폴더 안에는 저장할 수 없습니다."));
+    }
+    Ok((root, dest))
 }
 
 /// 작업 폴더(.rmtrans)를 제외하고 디렉토리 트리를 복사한다.
@@ -324,6 +350,44 @@ mod tests {
         // 원본은 그대로
         assert_eq!(fs::read_to_string(data.join("Actors.json")).unwrap(), actors);
 
+        fs::remove_dir_all(&base).ok();
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    use crate::rpgm::assets::tests::{keys_of, make_game};
+    use crate::rpgm::assets::{read_plain, scan, set_replacement, KeyRing};
+    use crate::rpgm::detect;
+
+    #[test]
+    fn exports_translated_images() {
+        let (base, game) = make_game("export-images");
+        let new_png: &[u8] = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR translated";
+        let src = base.join("t.png");
+        fs::write(&src, new_png).unwrap();
+        set_replacement(&game, "www/img/pictures/b.png_", &src).unwrap();
+        set_replacement(&game, "www/img/pictures/plain.png", &src).unwrap();
+        let keys = KeyRing::new(&keys_of(&scan(&detect::detect(&game).unwrap()).unwrap())).unwrap();
+
+        // 번역된 파일만: 번역 이미지만 원래 경로(암호화 확장자 그대로)로 쓰인다
+        let only = base.join("only");
+        let report = export(&game, &only, HashMap::new(), true, &[]).unwrap();
+        assert_eq!((report.images_applied, report.skipped.len()), (2, 0));
+        assert!(!only.join("www/img/pictures/a.rpgmvp").exists());
+        assert!(!only.join(WORK_DIR).exists());
+        let out = only.canonicalize().unwrap();
+        assert_eq!(read_plain(&out, "www/img/pictures/b.png_", &keys).unwrap(), new_png);
+        assert_eq!(fs::read(only.join("www/img/pictures/plain.png")).unwrap(), new_png);
+
+        // 전체 복사: 복사본을 덮어쓰고, 원본은 그대로
+        let full = base.join("full");
+        export(&game, &full, HashMap::new(), false, &[]).unwrap();
+        let out = full.canonicalize().unwrap();
+        assert_eq!(read_plain(&out, "www/img/pictures/b.png_", &keys).unwrap(), new_png);
+        assert_eq!(read_plain(&out, "www/img/pictures/a.rpgmvp", &keys).unwrap(), crate::rpgm::assets::tests::PNG);
+        assert_eq!(read_plain(&game, "www/img/pictures/b.png_", &keys).unwrap(), crate::rpgm::assets::tests::PNG);
         fs::remove_dir_all(&base).ok();
     }
 }

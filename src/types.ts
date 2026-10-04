@@ -73,6 +73,8 @@ export interface ProjectFile {
   entries: Record<string, SavedEntry>;
   options?: ProjectOptions;
   glossary?: GlossaryTerm[];
+  /** 사용자가 직접 입력한 리소스 암호화 키 (감지한 키보다 우선) */
+  assetKeys?: SchemeKey[];
 }
 
 export type Engine = "mv" | "mz" | "unknown";
@@ -94,6 +96,8 @@ export interface ExportReport {
   filesCopied: number;
   filesPatched: number;
   stringsApplied: number;
+  /** 번역 이미지를 쓴 파일 수 */
+  imagesApplied: number;
   skipped: string[];
 }
 
@@ -176,3 +180,74 @@ export const KIND_LABELS: Record<Kind, string> = {
   jsonData: "JSON 데이터",
   locale: "언어 파일",
 };
+
+// ── 리소스 (src-tauri/src/rpgm/assets.rs, crypto.rs, commands/assets.rs) ──
+
+export type Scheme = "standard" | "arthran";
+
+export const SCHEME_LABELS: Record<Scheme, string> = {
+  standard: "RPG Maker 내장",
+  arthran: "Arthran Decrypterator",
+};
+
+/** 방식별 실제 XOR 키 길이 (바이트) */
+export const SCHEME_KEY_BYTES: Record<Scheme, number> = { standard: 16, arthran: 32 };
+
+export type AssetKind = "image" | "audio" | "video" | "font";
+
+export const ASSET_KIND_LABELS: Record<AssetKind, string> = {
+  image: "이미지",
+  audio: "오디오",
+  video: "동영상",
+  font: "폰트",
+};
+
+export interface AssetFile {
+  /** 루트 기준 상대 경로, '/' 구분 */
+  path: string;
+  /** 복호화했을 때의 경로 (원래 확장자). 평문이면 path와 같다 */
+  plainPath: string;
+  kind: AssetKind;
+  /** 암호화 확장자인지 */
+  encrypted: boolean;
+  /** 헤더로 판별한 방식. 암호화 확장자인데 null이면 모르는 방식 */
+  scheme: Scheme | null;
+  size: number;
+}
+
+export type KeySource = "system" | "recovered" | "none";
+
+export interface SchemeInfo {
+  scheme: Scheme;
+  fileCount: number;
+  /** 실제 XOR 키 (hex) */
+  key: string | null;
+  keySource: KeySource;
+  /** System.json 키와 PNG에서 복구한 키가 다름 (복구한 키를 씀) */
+  keyMismatch: boolean;
+}
+
+export interface AssetScan {
+  /** 리소스 폴더의 루트 기준 상대 경로 ("www" 또는 "") */
+  webDir: string;
+  /** System.json의 encryptionKey 원문 */
+  systemKey: string | null;
+  schemes: SchemeInfo[];
+  /** 켜져 있는 암호화 관련 플러그인 */
+  cryptoPlugins: string[];
+  files: AssetFile[];
+  /** 번역 이미지가 등록된 리소스의 plainPath */
+  replacements: string[];
+  warnings: string[];
+}
+
+export interface SchemeKey {
+  scheme: Scheme;
+  key: string;
+}
+
+export interface AssetExportReport {
+  written: number;
+  decrypted: number;
+  failed: string[];
+}

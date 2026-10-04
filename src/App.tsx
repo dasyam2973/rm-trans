@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { extractEntries, openProject, saveProject } from "./api/project";
-import { MenuBar, type DialogKind } from "./components/layout/MenuBar";
+import { MenuBar, type DialogKind, type Tab } from "./components/layout/MenuBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { FilterBar } from "./components/filter/FilterBar";
 import { FileSidebar } from "./components/filter/FileSidebar";
@@ -14,8 +14,12 @@ import { PluginWarningDialog } from "./components/dialogs/PluginWarningDialog";
 import { DetailedWarningDialog } from "./components/dialogs/DetailedWarningDialog";
 import { LocalePairsDialog } from "./components/dialogs/LocalePairsDialog";
 import { GlossaryDialog } from "./components/dialogs/GlossaryDialog";
+import { AssetKeysDialog } from "./components/dialogs/AssetKeysDialog";
+import { AssetExportDialog } from "./components/dialogs/AssetExportDialog";
+import { AssetView } from "./components/assets/AssetView";
 import { filterEntries } from "./lib/filter";
 import { useGlossaryMatcher } from "./lib/glossary";
+import { useAssets } from "./stores/assetStore";
 import { useFilter } from "./stores/filterStore";
 import { useProject } from "./stores/projectStore";
 import { useSelection } from "./stores/selectionStore";
@@ -25,6 +29,7 @@ export default function App() {
   const { project, entries, translations, overrides } = useProject();
   const filter = useFilter();
   const glossary = useGlossaryMatcher();
+  const [tab, setTab] = useState<Tab>("translate");
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +52,7 @@ export default function App() {
       useProject.getState().load(opened);
       useSelection.getState().clear();
       useFilter.getState().reset();
+      useAssets.getState().reset();
       if (opened.warnings.length) setNotice(opened.warnings.join("\n"));
     } catch (e) {
       setError(String(e));
@@ -106,6 +112,12 @@ export default function App() {
     else setDialog("detailed");
   }, [changeOptions]);
 
+  // 리소스는 리소스 탭을 처음 열 때 찾는다 (번역 탭 여는 속도에 영향 없도록)
+  const assetRoot = useAssets((s) => s.root);
+  useEffect(() => {
+    if (tab === "assets" && project && assetRoot !== project.root) useAssets.getState().load(project.root);
+  }, [tab, project, assetRoot]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -127,6 +139,8 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <MenuBar
+        tab={tab}
+        onTab={setTab}
         onOpen={handleOpen}
         onSave={handleSave}
         onDialog={setDialog}
@@ -147,7 +161,9 @@ export default function App() {
         </div>
       )}
 
-      {project ? (
+      {project && tab === "assets" ? (
+        <AssetView onKeys={() => setDialog("assetKeys")} />
+      ) : project ? (
         <>
           <FilterBar filtered={filtered} total={entries.length} error={filterError} />
           <div className="flex min-h-0 flex-1">
@@ -174,6 +190,8 @@ export default function App() {
       {dialog === "bulk" && <BulkEditDialog onClose={close} />}
       {dialog === "glossary" && project && <GlossaryDialog onClose={close} />}
       {dialog === "aiSettings" && <AiSettingsDialog onClose={close} />}
+      {dialog === "assetKeys" && <AssetKeysDialog onClose={close} />}
+      {dialog === "assetExport" && <AssetExportDialog onClose={close} />}
       {dialog === "aiTranslate" && project && <AiTranslateDialog filtered={filtered} onClose={close} />}
       {dialog === "plugins" && project && (
         <PluginWarningDialog

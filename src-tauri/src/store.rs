@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+use crate::rpgm::assets::SchemeKey;
 
 pub const WORK_DIR: &str = ".rmtrans";
 const PROJECT_FILE: &str = "project.json";
@@ -59,6 +60,7 @@ pub struct GlossaryTerm {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectFile {
     pub version: u32,
     /// 아이템 ID → 저장된 번역 정보. BTreeMap으로 저장 순서를 고정해 diff를 안정적으로 유지
@@ -67,6 +69,9 @@ pub struct ProjectFile {
     pub options: ProjectOptions,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glossary: Vec<GlossaryTerm>,
+    /// 사용자가 직접 입력한 리소스 암호화 키 (감지한 키보다 우선)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asset_keys: Vec<SchemeKey>,
 }
 
 fn project_path(root: &Path) -> PathBuf {
