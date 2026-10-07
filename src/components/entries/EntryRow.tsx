@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import type { GlossaryMatcher } from "../../lib/glossary";
-import { isRiskyKind, KIND_LABELS, type Entry, type GlossaryTerm, type Status } from "../../types";
+import { isIdentLike, isRiskyEntry, isRiskyKind, KIND_LABELS, type Entry, type GlossaryTerm, type Status } from "../../types";
 
 interface Props {
   entry: Entry;
@@ -105,12 +105,17 @@ export const EntryRow = memo(function EntryRow({
 
       <div className="min-w-0">
         <div className="mb-0.5 flex items-center gap-1.5 text-[11px] text-zinc-500">
-          {isRiskyKind(entry.kind) ? (
+          {isRiskyEntry(entry) ? (
             <span
               className="rounded bg-amber-600/25 px-1 text-amber-300"
-              title="플러그인·외부 JSON 데이터입니다. 화면에 표시되는 문구인지 확인한 뒤 번역하세요. 파일명·식별자·스크립트 등을 바꾸면 게임이 깨질 수 있습니다."
+              title={
+                isRiskyKind(entry.kind)
+                  ? "플러그인·외부 JSON 데이터나 문자열 인수입니다. 화면에 표시되는 문구인지 확인한 뒤 번역하세요. 파일명·식별자·비교에 쓰이는 값 등을 바꾸면 게임이 깨질 수 있습니다."
+                  : "공백 없는 영문/숫자 값이라 내부 식별자일 수 있습니다. 화면에 표시되는 용어인지 확인한 뒤 번역하세요."
+              }
             >
               ⚠ {KIND_LABELS[entry.kind]}
+              {isIdentLike(entry) && " · 식별자 의심"}
             </span>
           ) : (
             <span className="rounded bg-zinc-800 px-1 text-zinc-400">{KIND_LABELS[entry.kind]}</span>
@@ -120,7 +125,7 @@ export const EntryRow = memo(function EntryRow({
             {entry.path}
           </span>
         </div>
-        <div className="rounded bg-zinc-900/60 px-2 py-1 whitespace-pre-wrap break-words text-zinc-300 select-text">
+        <div className="rounded bg-zinc-900/60 px-2 py-1 whitespace-pre-wrap wrap-break-words text-zinc-300 select-text">
           {segments.map((s, i) =>
             s.term ? (
               <span
@@ -154,7 +159,7 @@ export const EntryRow = memo(function EntryRow({
           }}
           rows={1}
           spellCheck={false}
-          className={`w-full resize-none rounded border bg-zinc-900 px-2 py-1 text-zinc-100 outline-none [field-sizing:content] focus:border-sky-500 ${
+          className={`w-full resize-none rounded border bg-zinc-900 px-2 py-1 text-zinc-100 outline-none field-sizing-content focus:border-sky-500 ${
             draft !== translation ? "border-amber-500/70" : "border-zinc-700"
           }`}
         />

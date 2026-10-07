@@ -5,10 +5,13 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use walkdir::WalkDir;
 
+use crate::engine::{self, Layout};
 use crate::error::{Error, Result};
 use crate::rpgm::apply;
+use crate::wolf;
+use crate::textfile;
 use crate::rpgm::assets::{self, join_rel};
-use crate::store::{LocalePair, WORK_DIR};
+use crate::store::{LocalePair, TextRule, WORK_DIR};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,6 +21,8 @@ pub struct ExportReport {
     pub strings_applied: usize,
     /// 번역 이미지를 쓴 파일 수
     pub images_applied: usize,
+    /// WOLF RPG: 복사하지 않은 .wolf 아카이브 수 (풀린 폴더가 있으면 아카이브가 우선해서 읽히므로 뺀다)
+    pub archives_skipped: usize,
     /// 적용하지 못한 아이템 ID, 번역 이미지 오류
     pub skipped: Vec<String>,
 }
@@ -26,6 +31,7 @@ pub struct ExportReport {
 /// `translations`: 아이템 ID("{file}#{pointer}") → 번역문 (원문과 다른 것만 보내면 된다)
 /// `translated_only`: true면 전체 복사 없이 번역이 실제로 적용된 파일만 같은 상대 경로로 dest에 쓴다.
 /// `locale_pairs`: 대상 언어 파일은 원본 언어 파일에 번역을 적용해 만들고, 번역이 없어도 항상 쓴다.
+/// `text_rules`: 텍스트 파일 규칙 (`textfile.rs`). 맞는 파일은 엔진과 무관하게 텍스트로 적용한다.
 #[tauri::command]
 pub async fn export_project(
     root: String,
@@ -33,9 +39,10 @@ pub async fn export_project(
     translations: HashMap<String, String>,
     translated_only: bool,
     locale_pairs: Vec<LocalePair>,
+    text_rules: Option<Vec<TextRule>>,
 ) -> Result<ExportReport> {
     tauri::async_runtime::spawn_blocking(move || {
-        export(Path::new(&root), Path::new(&dest), translations, translated_only, &locale_pairs)
+        export(Path::new(&root), Path::new(&dest), translations, translated_only, &locale_pairs, &text_rules.unwrap_or_default())
     })
     .await
     .expect("export_project 작업 패닉")
@@ -47,9 +54,12 @@ fn export(
     translations: HashMap<String, String>,
     translated_only: bool,
     locale_pairs: &[LocalePair],
+    text_rules: &[TextRule],
 ) -> Result<ExportReport> {
+    let layout = engine::detect(root)?;
     let (root, dest) = prepare_dest(root, dest)?;
-    let files_copied = if translated_only { 0 } else { copy_tree(&root, &dest)? };
+    let wolf = matches!(layout, Layout::Wolf(_));
+    let (files_copied, archives_skipped) = if translated_only { (0, 0) } else { copy_tree(&root, &dest, wolf)? };
 
     // 파일별로 묶어서 한 번씩만 읽고 쓴다
     let mut by_file: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
@@ -64,11 +74,41 @@ fn export(
         by_file.entry(target.to_string()).or_default();
     }
 
-    let mut report =
-        ExportReport { files_copied, files_patched: 0, strings_applied: 0, images_applied: 0, skipped: Vec::new() };
+    let mut report = ExportReport {
+        files_copied,
+        files_patched: 0,
+        strings_applied: 0,
+        images_applied: 0,
+        archives_skipped,
+        skipped: Vec::new(),
+    };
+    let text_rules = textfile::Rules::new(text_rules, &mut report.skipped);
     for (file, patches) in by_file {
         let in_root = |rel: &str| join_rel(&root, rel);
         let path = join_rel(&dest, &file);
+        // 텍스트 파일 규칙과 WOLF RPG 데이터는 항상 원본에서 읽어 바이트로 적용한다 (복사본과 내용은 같음.
+        // WOLF RPG DB는 .project도 필요). 파일 하나를 고칠 수 없어도 나머지는 계속 내보낸다
+        let bytes_result = if let Some(rule) = text_rules.rule_for(&file) {
+            Some(textfile::patch_file(&root, rule, &file, &patches).map(|r| (r.bytes, r.applied, r.skipped)))
+        } else if let Layout::Wolf(l) = &layout {
+            Some(wolf::apply::patch_file(l, &file, &patches).map(|r| (r.bytes, r.applied, r.skipped)))
+        } else {
+            None
+        };
+        if let Some(result) = bytes_result {
+            match result {
+                Ok((bytes, applied, skipped)) => {
+                    report.skipped.extend(skipped.into_iter().map(|p| format!("{file}#{p}")));
+                    if applied > 0 {
+                        write_file(&path, &bytes)?;
+                        report.files_patched += 1;
+                        report.strings_applied += applied;
+                    }
+                }
+                Err(msg) => report.skipped.push(format!("{file}: {msg}")),
+            }
+            continue;
+        }
         let locale_source = locale_sources.get(file.as_str());
         // 번역 파일만 내보낼 때는 복사본이 없으므로 원본에서 읽는다
         let src_path = match locale_source {
@@ -80,10 +120,7 @@ fn export(
         let result = apply::patch_file(&file, &src, &patches).map_err(|msg| Error::Parse { path: file.clone(), msg })?;
         report.skipped.extend(result.skipped.into_iter().map(|p| format!("{file}#{p}")));
         if result.applied > 0 || locale_source.is_some() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-            }
-            fs::write(&path, result.text).map_err(|e| Error::io(&path, e))?;
+            write_file(&path, result.text.as_bytes())?;
             report.files_patched += 1;
             report.strings_applied += result.applied;
         }
@@ -94,11 +131,7 @@ fn export(
         match assets::build_replacement(&root, &plain) {
             Ok(targets) => {
                 for (rel, bytes) in targets {
-                    let path = join_rel(&dest, &rel);
-                    if let Some(parent) = path.parent() {
-                        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
-                    }
-                    fs::write(&path, bytes).map_err(|e| Error::io(&path, e))?;
+                    write_file(&join_rel(&dest, &rel), &bytes)?;
                     report.images_applied += 1;
                 }
             }
@@ -127,9 +160,18 @@ pub(crate) fn prepare_dest(root: &Path, dest: &Path) -> Result<(PathBuf, PathBuf
     Ok((root, dest))
 }
 
-/// 작업 폴더(.rmtrans)를 제외하고 디렉토리 트리를 복사한다.
-fn copy_tree(src: &Path, dest: &Path) -> Result<usize> {
-    let mut count = 0;
+fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| Error::io(parent, e))?;
+    }
+    fs::write(path, bytes).map_err(|e| Error::io(path, e))
+}
+
+/// 작업 폴더(.rmtrans)를 제외하고 디렉토리 트리를 복사한다. (복사한 파일 수, 뺀 아카이브 수)를 돌려준다.
+/// `skip_unpacked_archives`: WOLF RPG에서 같은 이름의 풀린 폴더가 옆에 있는 `.wolf` 아카이브는 복사하지 않는다.
+/// 아카이브와 폴더가 함께 있으면 아카이브가 우선해서 읽혀 번역한 파일이 쓰이지 않기 때문이다.
+fn copy_tree(src: &Path, dest: &Path, skip_unpacked_archives: bool) -> Result<(usize, usize)> {
+    let (mut count, mut skipped) = (0, 0);
     let walker = WalkDir::new(src).min_depth(1).into_iter().filter_entry(|e| !(e.depth() == 1 && e.file_name() == WORK_DIR));
     for entry in walker {
         let entry = entry.map_err(|e| Error::msg(e.to_string()))?;
@@ -137,12 +179,19 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<usize> {
         let target: PathBuf = dest.join(rel);
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target).map_err(|e| Error::io(&target, e))?;
+        } else if skip_unpacked_archives && is_unpacked_archive(entry.path()) {
+            skipped += 1;
         } else {
             fs::copy(entry.path(), &target).map_err(|e| Error::io(entry.path(), e))?;
             count += 1;
         }
     }
-    Ok(count)
+    Ok((count, skipped))
+}
+
+/// `X.wolf` 옆에 풀린 폴더 `X`가 있는지
+fn is_unpacked_archive(path: &Path) -> bool {
+    path.extension().is_some_and(|x| x.eq_ignore_ascii_case("wolf")) && path.with_extension("").is_dir()
 }
 
 #[cfg(test)]
@@ -192,7 +241,7 @@ mod tests {
             (id("ハロルド"), "해롤드".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, false, &[]).unwrap();
+        let report = export(&game, &dest, translations, false, &[], &[]).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
         assert!(!dest.join(WORK_DIR).exists());
@@ -232,7 +281,7 @@ mod tests {
             (id("回復"), "회복".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, false, &[]).unwrap();
+        let report = export(&game, &dest, translations, false, &[], &[]).unwrap();
         assert_eq!(report.strings_applied, 3);
         assert!(report.skipped.is_empty());
 
@@ -263,7 +312,7 @@ mod tests {
         let id = |o: &str| ex.entries.iter().find(|e| e.original == o).unwrap().id.clone();
         let translations = HashMap::from([(id("薬草集め"), "약초 모으기".to_string()), (id("28"), "24".to_string())]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, true, &[]).unwrap();
+        let report = export(&game, &dest, translations, true, &[], &[]).unwrap();
         assert_eq!(report.strings_applied, 2);
         let out = fs::read_to_string(dest.join("data/Quests.json")).unwrap();
         assert_eq!(out, quests.replace("薬草集め", "약초 모으기").replace("\"28\"", "\"24\""));
@@ -302,7 +351,7 @@ mod tests {
         );
 
         // 번역이 하나도 없어도 대상 파일은 원본 언어로 채워서 만든다
-        let report = export(&game, &base.join("out0"), HashMap::new(), true, &pairs).unwrap();
+        let report = export(&game, &base.join("out0"), HashMap::new(), true, &pairs, &[]).unwrap();
         assert_eq!(report.files_patched, 1);
         assert_eq!(fs::read_to_string(base.join("out0/locales/ko.json")).unwrap(), ja);
 
@@ -311,7 +360,7 @@ mod tests {
             ("locales/ko.json#/items/0".to_string(), "검".to_string()),
         ]);
         let dest = base.join("out");
-        let report = export(&game, &dest, translations, false, &pairs).unwrap();
+        let report = export(&game, &dest, translations, false, &pairs, &[]).unwrap();
         assert_eq!(report.strings_applied, 2);
         let out = fs::read_to_string(dest.join("locales/ko.json")).unwrap();
         assert_eq!(out, ja.replace("メニュー", "메뉴").replace("剣", "검"));
@@ -337,7 +386,7 @@ mod tests {
         let entries = extract::extract_all(&layout, &ProjectOptions::default()).unwrap().entries;
         let id = entries.iter().find(|e| e.original == "ハロルド").unwrap().id.clone();
         let dest = base.join("out");
-        let report = export(&game, &dest, HashMap::from([(id, "해롤드".to_string())]), true, &[]).unwrap();
+        let report = export(&game, &dest, HashMap::from([(id, "해롤드".to_string())]), true, &[], &[]).unwrap();
         assert_eq!(report.files_copied, 0);
         assert_eq!(report.files_patched, 1);
         assert_eq!(report.strings_applied, 1);
@@ -373,7 +422,7 @@ mod image_tests {
 
         // 번역된 파일만: 번역 이미지만 원래 경로(암호화 확장자 그대로)로 쓰인다
         let only = base.join("only");
-        let report = export(&game, &only, HashMap::new(), true, &[]).unwrap();
+        let report = export(&game, &only, HashMap::new(), true, &[], &[]).unwrap();
         assert_eq!((report.images_applied, report.skipped.len()), (2, 0));
         assert!(!only.join("www/img/pictures/a.rpgmvp").exists());
         assert!(!only.join(WORK_DIR).exists());
@@ -383,11 +432,130 @@ mod image_tests {
 
         // 전체 복사: 복사본을 덮어쓰고, 원본은 그대로
         let full = base.join("full");
-        export(&game, &full, HashMap::new(), false, &[]).unwrap();
+        export(&game, &full, HashMap::new(), false, &[], &[]).unwrap();
         let out = full.canonicalize().unwrap();
         assert_eq!(read_plain(&out, "www/img/pictures/b.png_", &keys).unwrap(), new_png);
         assert_eq!(read_plain(&out, "www/img/pictures/a.rpgmvp", &keys).unwrap(), crate::rpgm::assets::tests::PNG);
         assert_eq!(read_plain(&game, "www/img/pictures/b.png_", &keys).unwrap(), crate::rpgm::assets::tests::PNG);
+        fs::remove_dir_all(&base).ok();
+    }
+}
+
+#[cfg(test)]
+mod wolf_tests {
+    use super::*;
+    use crate::engine::extract_all;
+    use crate::wolf::tests::sample_map;
+
+    const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+    #[test]
+    fn exports_wolf_translated_images() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-wolf-image-{}", std::process::id()));
+        let game = base.join("game");
+        fs::create_dir_all(game.join("Data/BasicData")).unwrap();
+        fs::create_dir_all(game.join("Data/Picture")).unwrap();
+        fs::write(game.join("Data/BasicData/CommonEvent.dat"), [0, 0x57, 0, 0, 0x4F, 0x4C, 0x55, 0x46, 0x43, 0, 0x90, 0, 0, 0, 0, 0x89]).unwrap();
+        let original = [PNG, b"original"].concat();
+        let translated = [PNG, b"translated"].concat();
+        fs::write(game.join("Data/Picture/title.png"), &original).unwrap();
+        fs::write(game.join("Data/Picture.wolf"), "packed").unwrap();
+        let source = base.join("title_ko.png");
+        fs::write(&source, &translated).unwrap();
+        assets::set_replacement(&game, "Data/Picture/title.png", &source).unwrap();
+
+        for (dir, only) in [("full", false), ("only", true)] {
+            let report = export(&game, &base.join(dir), HashMap::new(), only, &[], &[]).unwrap();
+            assert_eq!(report.images_applied, 1, "{dir}");
+            assert_eq!(fs::read(base.join(dir).join("Data/Picture/title.png")).unwrap(), translated);
+            // 풀린 폴더가 있는 아카이브는 복사하지 않아 번역 이미지가 쓰인다
+            assert!(!base.join(dir).join("Data/Picture.wolf").exists());
+        }
+        assert_eq!(fs::read(game.join("Data/Picture/title.png")).unwrap(), original);
+
+        // JPG는 평문 원본이면 등록할 수 있다 (형식은 원본과 같아야 함)
+        fs::write(game.join("Data/Picture/bg.jpg"), b"\xFF\xD8\xFFjpg").unwrap();
+        assert!(assets::set_replacement(&game, "Data/Picture/bg.jpg", &source).is_err());
+        let jpg = base.join("bg_ko.jpg");
+        fs::write(&jpg, b"\xFF\xD8\xFFko").unwrap();
+        assert_eq!(assets::set_replacement(&game, "Data/Picture/bg.jpg", &jpg).unwrap(), "Data/Picture/bg.jpg");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn exports_wolf_game() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-wolf-export-{}", std::process::id()));
+        let game = base.join("game");
+        fs::create_dir_all(game.join("Data/BasicData")).unwrap();
+        fs::create_dir_all(game.join("Data/MapData")).unwrap();
+        let map = sample_map(&["やあ", "またね"]);
+        fs::write(game.join("Data/MapData/Town.mps"), &map).unwrap();
+        fs::write(game.join("Data/BasicData/CommonEvent.dat"), [0, 0x57, 0, 0, 0x4F, 0x4C, 0x55, 0x46, 0x43, 0, 0x90, 0, 0, 0, 0, 0x89]).unwrap();
+        // 풀린 폴더가 있는 아카이브는 빼고, 없는 것은 그대로 복사한다
+        fs::write(game.join("Data.wolf"), "packed").unwrap();
+        fs::write(game.join("Data/MapData.wolf"), "packed").unwrap();
+        fs::write(game.join("Data/BGM.wolf"), "packed").unwrap();
+
+        let layout = engine::detect(&game).unwrap();
+        let entries = extract_all(&layout, &Default::default()).unwrap().entries;
+        assert_eq!(entries.len(), 2);
+        let translations = HashMap::from([(entries[1].id.clone(), "또 봐요".to_string())]);
+
+        let report = export(&game, &base.join("out"), translations.clone(), false, &[], &[]).unwrap();
+        assert_eq!((report.strings_applied, report.files_patched, report.archives_skipped), (1, 1, 2));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert!(!base.join("out/Data.wolf").exists() && !base.join("out/Data/MapData.wolf").exists());
+        assert!(base.join("out/Data/BGM.wolf").exists());
+
+        // 내보낸 게임을 다시 열면 번역이 들어 있다
+        let out = engine::detect(&base.join("out")).unwrap();
+        let texts: Vec<_> = extract_all(&out, &Default::default()).unwrap().entries.into_iter().map(|e| e.original).collect();
+        assert_eq!(texts, ["やあ", "또 봐요"]);
+        // 원본은 그대로
+        assert_eq!(fs::read(game.join("Data/MapData/Town.mps")).unwrap(), map);
+
+        let report = export(&game, &base.join("only"), translations, true, &[], &[]).unwrap();
+        assert_eq!((report.files_copied, report.files_patched), (0, 1));
+        assert!(base.join("only/Data/MapData/Town.mps").exists());
+        assert!(!base.join("only/Data/BasicData").exists());
+        fs::remove_dir_all(&base).ok();
+    }
+}
+
+#[cfg(test)]
+mod text_rule_tests {
+    use super::*;
+    use crate::engine::extract_all;
+    use crate::store::{ArgCommand, ProjectOptions};
+
+    #[test]
+    fn exports_text_files() {
+        let base = std::env::temp_dir().join(format!("rmtrans-test-textrule-{}", std::process::id()));
+        let game = base.join("game");
+        fs::create_dir_all(game.join("data")).unwrap();
+        fs::create_dir_all(game.join("story/ch1")).unwrap();
+        fs::write(game.join("data/System.json"), r#"{"gameTitle":"勇者"}"#).unwrap();
+        let script = "@mes 村人\r\nこんにちは\r\n@choice はい\r\n";
+        fs::write(game.join("story/ch1/a.txt"), script).unwrap();
+        fs::write(game.join("story/readme.md"), "対象外").unwrap();
+
+        let rules = vec![TextRule {
+            pattern: "story/**/*.txt".into(),
+            skip_prefixes: vec!["@".into()],
+            arg_commands: vec![ArgCommand { command: "@choice".into(), arg: 1 }],
+        }];
+        let options = ProjectOptions { text_rules: rules.clone(), ..Default::default() };
+        let entries = extract_all(&engine::detect(&game).unwrap(), &options).unwrap().entries;
+        let got: Vec<_> = entries.iter().map(|e| (e.id.as_str(), e.original.as_str())).collect();
+        assert_eq!(got, [("data/System.json#/gameTitle", "勇者"), ("story/ch1/a.txt#/lines/1", "こんにちは"), ("story/ch1/a.txt#/lines/2/1", "はい")]);
+
+        let translations = HashMap::from([
+            ("story/ch1/a.txt#/lines/1".to_string(), "안녕하세요".to_string()),
+            ("story/ch1/a.txt#/lines/2/1".to_string(), "네 좋아요".to_string()),
+        ]);
+        let report = export(&game, &base.join("out"), translations, true, &[], &rules).unwrap();
+        assert_eq!((report.files_patched, report.strings_applied), (1, 2));
+        assert_eq!(fs::read_to_string(base.join("out/story/ch1/a.txt")).unwrap(), "@mes 村人\r\n안녕하세요\r\n@choice 네\u{3000}좋아요\r\n");
         fs::remove_dir_all(&base).ok();
     }
 }

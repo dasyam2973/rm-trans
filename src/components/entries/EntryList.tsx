@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, type MouseEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useCallback, useMemo, useRef, type MouseEvent, type PointerEvent } from "react";
+import { measureElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useGlossaryMatcher } from "../../lib/glossary";
 import { statusOf, translationOf } from "../../lib/status";
 import { useProject } from "../../stores/projectStore";
@@ -34,14 +34,46 @@ export function EntryList({ filtered }: { filtered: Entry[] }) {
   const order = useRef<string[]>([]);
   order.current = useMemo(() => filtered.map((e) => e.id), [filtered]);
 
+  // 아직 측정하지 않은 행은 지금까지 측정한 같은 종류 행의 평균 높이로 추정한다.
+  // 추정치가 실제와 많이 다르면 스크롤할 때마다 전체 높이가 바뀌어 스크롤바가 마우스를 따라가지 못한다.
+  const sizes = useRef({ seen: new Map<string, number>(), group: { sum: 0, n: 0 }, entry: { sum: 0, n: 0 } });
+  const estimate = (type: Row["type"]) => {
+    const s = sizes.current[type];
+    return s.n ? s.sum / s.n : type === "group" ? 26 : 72;
+  };
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (i) => (rows[i].type === "group" ? 30 : 64),
+    estimateSize: (i) => estimate(rows[i].type),
     getItemKey: (i) => rows[i].key,
+    measureElement: (el, entry, instance) => {
+      const size = measureElement(el, entry, instance);
+      const row = rows[Number((el as HTMLElement).dataset.index)];
+      if (row) {
+        const s = sizes.current;
+        const prev = s.seen.get(row.key);
+        const stat = s[row.type];
+        if (prev === undefined) stat.n++;
+        stat.sum += size - (prev ?? 0);
+        s.seen.set(row.key, size);
+      }
+      return size;
+    },
     overscan: 8,
   });
+
+  // 스크롤바를 끄는 동안에는 행 높이 보정으로 scrollTop을 옮기지 않는다 (마우스 위치와 어긋나 튀는 원인)
+  const onScrollPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return; // 스크롤바를 누른 경우만 대상이 컨테이너 자신이다
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+    const release = () => {
+      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined;
+      window.removeEventListener("pointerup", release);
+    };
+    window.addEventListener("pointerup", release);
+  };
 
   const onSelect = useCallback((id: string, e: MouseEvent) => {
     const sel = useSelection.getState();
@@ -62,7 +94,7 @@ export function EntryList({ filtered }: { filtered: Entry[] }) {
         <span>번역문</span>
         <span>상태</span>
       </div>
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto" onPointerDown={onScrollPointerDown}>
         {rows.length === 0 ? (
           <div className="p-8 text-center text-zinc-500">표시할 항목이 없습니다.</div>
         ) : (

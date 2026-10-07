@@ -31,11 +31,11 @@ pub enum AssetKind {
 }
 
 impl AssetKind {
-    fn of(ext: &str) -> Option<AssetKind> {
+    pub(crate) fn of(ext: &str) -> Option<AssetKind> {
         Some(match ext {
             "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => AssetKind::Image,
             "ogg" | "m4a" | "mp3" | "wav" => AssetKind::Audio,
-            "webm" | "mp4" => AssetKind::Video,
+            "webm" | "mp4" | "ogv" => AssetKind::Video,
             "ttf" | "otf" | "woff" | "woff2" => AssetKind::Font,
             _ => return None,
         })
@@ -217,15 +217,19 @@ pub fn list_replacements(root: &Path) -> Vec<String> {
     list
 }
 
-/// 리소스(path)의 번역 이미지로 source PNG를 복사해 등록한다. 등록된 plain_path를 돌려준다.
+/// 리소스(path)의 번역 이미지로 source 이미지를 복사해 등록한다. 등록된 plain_path를 돌려준다.
+/// 게임은 확장자까지 포함한 이름으로 이미지를 찾으므로 원본과 같은 형식이어야 한다.
+/// PNG는 암호화된 원본도 되고(내보낼 때 재암호화), JPG는 평문 원본만 된다 (WOLF RPG 등).
 pub fn set_replacement(root: &Path, path: &str, source: &Path) -> Result<String> {
     let plain_rel = plain_path(path);
-    if ext_of(&plain_rel) != "png" {
-        return Err(Error::msg("번역 이미지는 PNG 리소스에만 등록할 수 있습니다."));
+    let ext = ext_of(&plain_rel);
+    let replaceable = ext == "png" || (matches!(ext.as_str(), "jpg" | "jpeg") && plain_rel == path);
+    if !replaceable {
+        return Err(Error::msg("번역 이미지는 PNG 리소스와 암호화되지 않은 JPG 리소스에만 등록할 수 있습니다."));
     }
     let bytes = fs::read(source).map_err(|e| Error::io(source, e))?;
-    if !crypto::looks_like(&bytes, "png") {
-        return Err(Error::msg(format!("PNG 파일이 아닙니다: {}", source.display())));
+    if !crypto::looks_like(&bytes, &ext) {
+        return Err(Error::msg(format!("{} 파일이 아닙니다: {}", ext.to_uppercase(), source.display())));
     }
     let dest = safe_join(&replacement_dir(root), &plain_rel)?;
     if let Some(parent) = dest.parent() {
@@ -305,7 +309,7 @@ pub fn safe_join(base: &Path, rel: &str) -> Result<PathBuf> {
     Ok(join_rel(base, rel))
 }
 
-fn rel_path(root: &Path, path: &Path) -> Option<String> {
+pub(crate) fn rel_path(root: &Path, path: &Path) -> Option<String> {
     let rel = path.strip_prefix(root).ok()?;
     let parts: Vec<_> = rel.components().map(|c| c.as_os_str().to_str()).collect::<Option<_>>()?;
     Some(parts.join("/"))
@@ -324,7 +328,7 @@ fn with_ext(rel: &str, old: &str, new: &str) -> String {
     format!("{}{new}", &rel[..rel.len() - old.len()])
 }
 
-fn ext_of(rel: &str) -> String {
+pub(crate) fn ext_of(rel: &str) -> String {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default()
 }

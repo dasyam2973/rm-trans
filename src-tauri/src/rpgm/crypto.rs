@@ -160,6 +160,7 @@ pub fn encrypted_exts(plain: &str) -> &'static [&'static str] {
 pub fn looks_like(plain: &[u8], ext: &str) -> bool {
     match ext {
         "png" => plain.starts_with(&PNG_HEAD[..8]),
+        "jpg" | "jpeg" => plain.starts_with(&[0xFF, 0xD8, 0xFF]),
         "ogg" => plain.starts_with(b"OggS"),
         "m4a" => plain.get(4..8) == Some(b"ftyp"),
         _ => true,

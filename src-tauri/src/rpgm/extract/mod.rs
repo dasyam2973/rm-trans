@@ -11,11 +11,9 @@ mod system;
 use std::collections::HashMap;
 use std::fs;
 
-use serde::Serialize;
-
 use crate::error::{Error, Result};
 use crate::jsonspan::{self, Node};
-use crate::model::{Entry, Kind};
+use crate::model::{Entry, Extracted, Kind};
 use crate::store::ProjectOptions;
 
 use super::detect::GameLayout;
@@ -26,14 +24,6 @@ const DB_ORDER: &[&str] = &[
     "System", "Actors", "Classes", "Skills", "Items", "Weapons", "Armors", "Enemies", "States", "Troops",
     "CommonEvents",
 ];
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Extracted {
-    pub entries: Vec<Entry>,
-    /// 추출은 계속했지만 사용자에게 알려야 하는 문제 (플러그인 파일을 읽지 못함 등)
-    pub warnings: Vec<String>,
-}
 
 /// 추출 결과를 모으는 대상. 파일 하나 단위로 만든다.
 pub(crate) struct Sink<'a> {
@@ -66,20 +56,7 @@ impl<'a> Sink<'a> {
         context: Option<&str>,
     ) {
         let Some(text) = node.and_then(Node::as_str) else { return };
-        if text.trim().is_empty() {
-            return;
-        }
-        self.out.push(Entry {
-            id: format!("{}#{}", self.file, path),
-            file: self.file.to_string(),
-            path,
-            kind,
-            group: group.to_string(),
-            group_label: group_label.to_string(),
-            context: context.filter(|c| !c.is_empty()).map(str::to_string),
-            original: text.to_string(),
-            initial: None,
-        });
+        self.out.extend(Entry::text(self.file, path, kind, group, group_label, context, text));
     }
 }
 

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
 
-use super::codes::{self, Masked};
+use super::codes::{self, Dialect, Masked};
 use super::glossary::Glossary;
 use super::{client, lines, prompt, settings::AiSettings};
 use crate::store::GlossaryTerm;
@@ -41,14 +41,14 @@ pub struct Job {
 }
 
 impl Job {
-    pub fn new(item: AiItem) -> Self {
-        Job { masked: codes::mask(&item.text), ids: vec![item.id], group: item.group, context: item.context, line_limit: 0.0 }
+    pub fn new(item: AiItem, dialect: Dialect) -> Self {
+        Job { masked: codes::mask(&item.text, dialect), ids: vec![item.id], group: item.group, context: item.context, line_limit: 0.0 }
     }
 
     /// 대사 블록의 줄들을 이어 작업 하나로 만든다.
-    fn merged(lines: Vec<AiItem>, max_width: f32) -> Self {
+    fn merged(lines: Vec<AiItem>, max_width: f32, dialect: Dialect) -> Self {
         let texts: Vec<&str> = lines.iter().map(|l| l.text.as_str()).collect();
-        let masked = codes::mask(&lines::join(&texts));
+        let masked = codes::mask(&lines::join(&texts), dialect);
         // 원문 줄이 이미 그만큼 넓었다면 창이 그 폭을 담을 수 있다고 본다
         let widest = texts.iter().map(|t| codes::display_width(t.trim())).fold(0.0, f32::max);
         let (group, context) = (lines[0].group.clone(), lines[0].context.clone());
@@ -72,7 +72,7 @@ enum Slot {
 }
 
 /// 아이템을 번역 작업으로 바꾼다. 병합 대상 줄은 그룹별로 이어 작업 하나로 만든다.
-fn build_jobs(items: Vec<AiItem>, settings: &AiSettings) -> Vec<Job> {
+fn build_jobs(items: Vec<AiItem>, settings: &AiSettings, dialect: Dialect) -> Vec<Job> {
     let enabled = settings.merge_lines && lines::splits_by_space(&settings.target_language);
     let mut merged: HashMap<String, Vec<AiItem>> = HashMap::new();
     let mut slots = Vec::new();
@@ -90,13 +90,13 @@ fn build_jobs(items: Vec<AiItem>, settings: &AiSettings) -> Vec<Job> {
     slots
         .into_iter()
         .flat_map(|slot| match slot {
-            Slot::Single(item) => vec![Job::new(item)],
+            Slot::Single(item) => vec![Job::new(item, dialect)],
             Slot::Merged(group) => {
                 let lines = merged.remove(&group).expect("슬롯을 만들 때 넣었다");
                 if lines.len() == 1 {
-                    lines.into_iter().map(Job::new).collect()
+                    lines.into_iter().map(|l| Job::new(l, dialect)).collect()
                 } else {
-                    vec![Job::merged(lines, settings.max_line_width)]
+                    vec![Job::merged(lines, settings.max_line_width, dialect)]
                 }
             }
         })
@@ -236,12 +236,13 @@ pub async fn run(
     settings: AiSettings,
     items: Vec<AiItem>,
     glossary: Vec<GlossaryTerm>,
+    dialect: Dialect,
 ) -> AiSummary {
     let glossary = Glossary::new(glossary);
     let total = items.len();
     let system = prompt::system_prompt(&settings.system_prompt, &settings.target_language);
     let http = reqwest::Client::builder().timeout(Duration::from_secs(300)).build().expect("HTTP 클라이언트 생성");
-    let jobs: Vec<Job> = build_jobs(items, &settings).into_iter().filter(|job| job.masked.has_text()).collect();
+    let jobs: Vec<Job> = build_jobs(items, &settings, dialect).into_iter().filter(|job| job.masked.has_text()).collect();
     let skipped = total - item_count(&jobs);
     let batches = make_batches(jobs, settings.batch_size);
 
@@ -305,7 +306,7 @@ mod tests {
     }
 
     fn item(group: &str) -> Job {
-        Job::new(ai_item("", "", group, false))
+        Job::new(ai_item("", "", group, false), Dialect::Rpgm)
     }
 
     #[test]
@@ -317,21 +318,21 @@ mod tests {
             ai_item("3", "一行だけ", "b", true),
             ai_item("4", "部分", "c", false),
         ];
-        let jobs = build_jobs(items.clone(), &AiSettings::default());
+        let jobs = build_jobs(items.clone(), &AiSettings::default(), Dialect::Rpgm);
         let ids: Vec<_> = jobs.iter().map(|j| j.ids.join(",")).collect();
         assert_eq!(ids, ["s", "1,2", "3", "4"]);
         assert_eq!(jobs[1].masked.text, "昨日、村の外れで光を見た。");
 
         // 띄어쓰기를 쓰지 않는 대상 언어나 설정이 꺼져 있으면 병합하지 않는다
         let settings = AiSettings { target_language: "Japanese".into(), ..AiSettings::default() };
-        assert_eq!(build_jobs(items.clone(), &settings).len(), 5);
+        assert_eq!(build_jobs(items.clone(), &settings, Dialect::Rpgm).len(), 5);
         let settings = AiSettings { merge_lines: false, ..AiSettings::default() };
-        assert_eq!(build_jobs(items, &settings).len(), 5);
+        assert_eq!(build_jobs(items, &settings, Dialect::Rpgm).len(), 5);
     }
 
     #[test]
     fn splits_merged_result() {
-        let job = Job::merged(vec![ai_item("1", "昨日、村の外れで", "a", true), ai_item("2", "光を見た。", "a", true)], 22.0);
+        let job = Job::merged(vec![ai_item("1", "昨日、村の外れで", "a", true), ai_item("2", "光を見た。", "a", true)], 22.0, Dialect::Rpgm);
         let results = job.results("어제 마을 밖에서 빛을 봤다.".into());
         let texts: Vec<_> = results.iter().map(|r| (r.id.as_str(), r.text.as_str())).collect();
         assert_eq!(texts, [("1", "어제 마을 밖에서 빛을 봤다."), ("2", "")]);

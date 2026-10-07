@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { extractEntries, openProject, saveProject } from "./api/project";
-import { MenuBar, type DialogKind, type Tab } from "./components/layout/MenuBar";
+import { MenuBar, TabBar, type DialogKind, type Tab } from "./components/layout/MenuBar";
 import { StatusBar } from "./components/layout/StatusBar";
 import { FilterBar } from "./components/filter/FilterBar";
 import { FileSidebar } from "./components/filter/FileSidebar";
@@ -13,6 +13,7 @@ import { AiTranslateDialog } from "./components/dialogs/AiTranslateDialog";
 import { PluginWarningDialog } from "./components/dialogs/PluginWarningDialog";
 import { DetailedWarningDialog } from "./components/dialogs/DetailedWarningDialog";
 import { LocalePairsDialog } from "./components/dialogs/LocalePairsDialog";
+import { TextRulesDialog } from "./components/dialogs/TextRulesDialog";
 import { GlossaryDialog } from "./components/dialogs/GlossaryDialog";
 import { AssetKeysDialog } from "./components/dialogs/AssetKeysDialog";
 import { AssetExportDialog } from "./components/dialogs/AssetExportDialog";
@@ -42,7 +43,7 @@ export default function App() {
 
   const handleOpen = useCallback(async () => {
     if (useProject.getState().dirty && !confirm("저장하지 않은 변경 사항이 있습니다. 무시하고 다른 폴더를 열까요?")) return;
-    const dir = await open({ directory: true, title: "RPG Maker 게임 폴더 선택" });
+    const dir = await open({ directory: true, title: "게임 폴더 선택" });
     if (typeof dir !== "string") return;
     setLoading(true);
     setError(null);
@@ -95,6 +96,10 @@ export default function App() {
       const messages = [...warnings];
       if (changes.includePlugins && !entries.some((e) => isPluginKind(e.kind))) messages.push("추출된 플러그인 데이터가 없습니다.");
       if (changes.detailed && !entries.some((e) => e.kind === "jsonData")) messages.push("추출된 외부 JSON 데이터가 없습니다.");
+      if (changes.textRules?.length) {
+        const n = entries.filter((e) => e.kind === "scriptText" || e.kind === "scriptArg").length;
+        messages.push(n ? `텍스트 파일에서 ${n.toLocaleString()}개 항목을 추출했습니다.` : "텍스트 파일에서 추출된 항목이 없습니다.");
+      }
       if (messages.length) setNotice(messages.join("\n"));
     } catch (e) {
       setError(String(e));
@@ -140,13 +145,13 @@ export default function App() {
     <div className="flex h-full flex-col">
       <MenuBar
         tab={tab}
-        onTab={setTab}
         onOpen={handleOpen}
         onSave={handleSave}
         onDialog={setDialog}
         onTogglePlugins={handleTogglePlugins}
         onToggleDetailed={handleToggleDetailed}
       />
+      <TabBar tab={tab} onTab={setTab} />
 
       {error && (
         <div className="flex items-start gap-2 border-b border-rose-900 bg-rose-950/60 px-3 py-1.5 text-sm text-rose-200">
@@ -177,8 +182,12 @@ export default function App() {
             <p>불러오는 중…</p>
           ) : (
             <>
-              <p>RPG Maker MV/MZ 게임 폴더를 열어 주세요.</p>
-              <p className="text-xs">게임 루트, www 폴더, data 폴더 중 아무거나 선택해도 됩니다.</p>
+              <p>RPG Maker MV/MZ 또는 WOLF RPG 게임 폴더를 열어 주세요.</p>
+              <p className="text-xs">RPG Maker: 게임 루트, www 폴더, data 폴더 중 아무거나 선택해도 됩니다.</p>
+              <p className="text-xs">
+                WOLF RPG: 압축을 푼 Data 폴더(BasicData, MapData)가 있는 게임 루트나 Data 폴더를 선택하세요. .wolf 아카이브는 UberWolf
+                등으로 먼저 풀어 주세요.
+              </p>
             </>
           )}
         </div>
@@ -208,6 +217,15 @@ export default function App() {
           onApply={(localePairs) => {
             close();
             changeOptions({ localePairs });
+          }}
+        />
+      )}
+      {dialog === "textRules" && project && (
+        <TextRulesDialog
+          onClose={close}
+          onApply={(textRules) => {
+            close();
+            changeOptions({ textRules });
           }}
         />
       )}

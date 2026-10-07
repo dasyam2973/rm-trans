@@ -1,8 +1,7 @@
 import { useMemo } from "react";
 import { statusOf } from "../../lib/status";
 import { useProject } from "../../stores/projectStore";
-
-const ENGINE_LABEL = { mv: "RPG Maker MV", mz: "RPG Maker MZ", unknown: "엔진 미확인" };
+import { ENGINE_LABELS } from "../../types";
 
 export function StatusBar() {
   const { project, entries, translations, overrides, dirty } = useProject();
@@ -11,12 +10,12 @@ export function StatusBar() {
     [entries, translations, overrides],
   );
 
-  if (!project) return <div className="border-t border-zinc-800 bg-zinc-900 px-3 py-1 text-xs text-zinc-500">폴더를 열어 주세요.</div>;
+  if (!project) return <div className="border-t border-zinc-800 bg-zinc-900 px-3 py-1 text-[12px] text-zinc-500">폴더를 열어 주세요.</div>;
 
   const pct = entries.length ? ((done / entries.length) * 100).toFixed(1) : "0";
   return (
-    <div className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-3 py-1 text-xs text-zinc-400">
-      <span>{ENGINE_LABEL[project.engine]}</span>
+    <div className="flex items-center gap-4 border-t border-zinc-800 bg-zinc-900 px-3 py-1 text-[12px] text-zinc-400">
+      <span>{ENGINE_LABELS[project.engine]}</span>
       <span className="truncate" title={project.root}>
         {project.root}
       </span>

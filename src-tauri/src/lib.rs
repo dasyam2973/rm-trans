@@ -1,10 +1,13 @@
 mod ai;
 mod commands;
+mod engine;
 mod error;
 mod jsonspan;
 mod model;
 mod rpgm;
 mod store;
+mod textfile;
+mod wolf;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

@@ -2,10 +2,9 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::engine;
 use crate::error::Result;
-use crate::model::{Engine, Entry};
-use crate::rpgm::extract::Extracted;
-use crate::rpgm::{detect, extract};
+use crate::model::{Engine, Entry, Extracted};
 use crate::store::{self, ProjectFile, ProjectOptions};
 
 #[derive(Serialize)]
@@ -24,11 +23,18 @@ pub struct OpenedProject {
 pub async fn open_project(path: String) -> Result<OpenedProject> {
     tauri::async_runtime::spawn_blocking(move || {
         let root = PathBuf::from(&path);
-        let layout = detect::detect(&root)?;
+        let layout = engine::detect(&root)?;
         let saved = store::load(&root)?;
         let options = saved.as_ref().map(|s| s.options.clone()).unwrap_or_default();
-        let Extracted { entries, warnings } = extract::extract_all(&layout, &options)?;
-        Ok(OpenedProject { root: path, data_dir: layout.data_rel, engine: layout.engine, entries, warnings, saved })
+        let Extracted { entries, warnings } = engine::extract_all(&layout, &options)?;
+        Ok(OpenedProject {
+            root: path,
+            data_dir: layout.data_rel().to_string(),
+            engine: layout.engine(),
+            entries,
+            warnings,
+            saved,
+        })
     })
     .await
     .expect("open_project 작업 패닉")
@@ -38,8 +44,8 @@ pub async fn open_project(path: String) -> Result<OpenedProject> {
 #[tauri::command]
 pub async fn extract_entries(root: String, options: ProjectOptions) -> Result<Extracted> {
     tauri::async_runtime::spawn_blocking(move || {
-        let layout = detect::detect(&PathBuf::from(root))?;
-        extract::extract_all(&layout, &options)
+        let layout = engine::detect(&PathBuf::from(root))?;
+        engine::extract_all(&layout, &options)
     })
     .await
     .expect("extract_entries 작업 패닉")

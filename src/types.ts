@@ -15,13 +15,26 @@ export type Kind =
   | "pluginParam"
   | "pluginCommand"
   | "jsonData"
-  | "locale";
+  | "locale"
+  | "pictureText"
+  | "stringArg"
+  | "dbValue"
+  | "scriptText"
+  | "scriptArg";
 
 /** 플러그인 데이터인지 */
 export const isPluginKind = (k: Kind) => k === "pluginParam" || k === "pluginCommand";
 
-/** 잘못 번역하면 게임이 깨질 수 있는 데이터인지 (플러그인 데이터, 세부 수정의 외부 JSON) */
-export const isRiskyKind = (k: Kind) => isPluginKind(k) || k === "jsonData";
+/** 잘못 번역하면 게임이 깨질 수 있는 데이터인지 (플러그인 데이터, 세부 수정의 외부 JSON, WOLF RPG 문자열 인수) */
+export const isRiskyKind = (k: Kind) => isPluginKind(k) || k === "jsonData" || k === "stringArg";
+
+/** WOLF RPG의 DB 문자열·문자열 인수 중 공백 없는 영문/숫자 토큰 (smile1, BZ_waitA, initialize …).
+ * 내부 식별자일 가능성이 높지만 Lv·SP 같은 표시 용어도 섞여 있어 추출은 하고 위험 항목으로 다룬다 */
+export const isIdentLike = (e: Entry) =>
+  (e.kind === "dbValue" || e.kind === "stringArg") && /^[A-Za-z0-9_-]+$/.test(e.original.trim());
+
+/** AI 번역에서 기본으로 빼고 경고를 표시하는 항목 */
+export const isRiskyEntry = (e: Entry) => isRiskyKind(e.kind) || isIdentLike(e);
 
 export interface Entry {
   /** "{file}#{pointer}" */
@@ -51,6 +64,25 @@ export interface ProjectOptions {
   detailed: boolean;
   /** 번역 플러그인의 언어 파일 쌍 */
   localePairs: LocalePair[];
+  /** 게임 자체 스크립트 등 텍스트 파일 추출 규칙 (엔진과 무관) */
+  textRules: TextRule[];
+}
+
+/** 텍스트 파일 추출 규칙 (src-tauri/src/textfile.rs).
+ * 접두로 시작하지 않는 줄이 이어진 묶음 하나, 지정한 명령의 인자 토큰 하나가 각각 항목이 된다 */
+export interface TextRule {
+  /** 게임 루트 기준 파일 패턴 ('/' 구분, * ** ?) */
+  pattern: string;
+  /** 이 문자열로 시작하는 줄은 명령·주석이라 번역하지 않는다 */
+  skipPrefixes: string[];
+  /** 인자에 표시 문장이 들어 있는 명령 */
+  argCommands: ArgCommand[];
+}
+
+/** command로 시작하는 줄을 공백으로 나눴을 때 arg번째(명령 자신이 0) 토큰이 표시 문장이다 */
+export interface ArgCommand {
+  command: string;
+  arg: number;
 }
 
 /** 원본 언어 파일 → 대상 언어 파일 (게임 루트 기준 상대 경로, '/' 구분).
@@ -77,7 +109,19 @@ export interface ProjectFile {
   assetKeys?: SchemeKey[];
 }
 
-export type Engine = "mv" | "mz" | "unknown";
+/** wolf2: WOLF RPG 2.x (Shift-JIS), wolf3: WOLF RPG 3.x (UTF-8) */
+export type Engine = "mv" | "mz" | "unknown" | "wolf2" | "wolf3";
+
+export const ENGINE_LABELS: Record<Engine, string> = {
+  mv: "RPG Maker MV",
+  mz: "RPG Maker MZ",
+  unknown: "엔진 미확인",
+  wolf2: "WOLF RPG 2.x",
+  wolf3: "WOLF RPG 3.x",
+};
+
+/** WOLF RPG에는 RPG Maker 전용 옵션(플러그인, 세부 수정, 언어 파일)이 없다 */
+export const isWolf = (e: Engine) => e === "wolf2" || e === "wolf3";
 
 export interface Extracted {
   entries: Entry[];
@@ -98,6 +142,8 @@ export interface ExportReport {
   stringsApplied: number;
   /** 번역 이미지를 쓴 파일 수 */
   imagesApplied: number;
+  /** WOLF RPG: 풀린 폴더가 있어서 복사하지 않은 .wolf 아카이브 수 */
+  archivesSkipped: number;
   skipped: string[];
 }
 
@@ -154,6 +200,9 @@ export interface AiItem {
   merge?: boolean;
 }
 
+/** AI 번역 시 제어 문자 마스킹 규칙 (엔진별) */
+export type Dialect = "rpgm" | "wolf";
+
 export interface AiSummary {
   translated: number;
   failed: number;
@@ -179,6 +228,11 @@ export const KIND_LABELS: Record<Kind, string> = {
   pluginCommand: "플러그인 커맨드",
   jsonData: "JSON 데이터",
   locale: "언어 파일",
+  pictureText: "문자열 그림",
+  stringArg: "문자열 인수",
+  dbValue: "DB 문자열",
+  scriptText: "스크립트 문장",
+  scriptArg: "스크립트 인자",
 };
 
 // ── 리소스 (src-tauri/src/rpgm/assets.rs, crypto.rs, commands/assets.rs) ──

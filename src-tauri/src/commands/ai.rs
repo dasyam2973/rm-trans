@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 
 use tauri::{AppHandle, State};
 
+use crate::ai::codes::Dialect;
 use crate::ai::runner::{self, AiItem, AiState, AiSummary};
 use crate::ai::settings::AiSettings;
 use crate::error::{Error, Result};
@@ -15,6 +16,8 @@ pub async fn ai_translate(
     settings: AiSettings,
     items: Vec<AiItem>,
     glossary: Vec<GlossaryTerm>,
+    // 제어 문자 규칙. 없으면 RPG Maker
+    dialect: Option<Dialect>,
 ) -> Result<AiSummary> {
     if settings.model.trim().is_empty() {
         return Err(Error::msg("AI 설정에서 모델을 지정해 주세요."));
@@ -23,7 +26,7 @@ pub async fn ai_translate(
         return Err(Error::msg("이미 번역이 진행 중입니다."));
     }
     state.cancel.store(false, Ordering::SeqCst);
-    let summary = runner::run(&app, &state, settings, items, glossary).await;
+    let summary = runner::run(&app, &state, settings, items, glossary, dialect.unwrap_or_default()).await;
     state.running.store(false, Ordering::SeqCst);
     Ok(summary)
 }

@@ -2,7 +2,8 @@ import type { Entry, Kind, Status } from "../types";
 import { glossaryIssues, type GlossaryMatcher } from "./glossary";
 import { statusOf, translationOf } from "./status";
 
-export type SearchScope = "both" | "original" | "translation" | "path";
+/** context: 맥락(DB 필드 이름·화자)과 그룹 이름 (WOLF RPG DB 대사처럼 원문만으로는 고르기 어려운 항목용) */
+export type SearchScope = "both" | "original" | "translation" | "path" | "context";
 
 /** 경로 검색용: JSON Pointer 토큰 이스케이프(~1 → /, ~0 → ~)를 풀어 표시되는 키 이름 그대로 찾을 수 있게 한다 */
 const searchablePath = (path: string) => path.replace(/~1/g, "/").replace(/~0/g, "~");
@@ -63,8 +64,10 @@ export function filterEntries(
       const hit =
         opts.scope === "path"
           ? matcher.test(searchablePath(e.path))
-          : (opts.scope !== "translation" && matcher.test(e.original)) ||
-            (opts.scope !== "original" && matcher.test(translationOf(e, translations)));
+          : opts.scope === "context"
+            ? matcher.test(e.context ?? "") || matcher.test(e.groupLabel)
+            : (opts.scope !== "translation" && matcher.test(e.original)) ||
+              (opts.scope !== "original" && matcher.test(translationOf(e, translations)));
       if (!hit) return false;
     }
     return true;

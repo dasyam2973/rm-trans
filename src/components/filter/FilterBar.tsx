@@ -7,6 +7,12 @@ import { useProject } from "../../stores/projectStore";
 import { useSelection } from "../../stores/selectionStore";
 import { Button, Toggle, inputClass } from "../ui";
 
+/** 검색 범위별 입력란 예시 */
+const SCOPE_HINTS: Partial<Record<SearchScope, string>> = {
+  path: " (예: Font Size)",
+  context: " (예: セリフ|文章|説明)",
+};
+
 export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total: number; error?: string }) {
   const f = useFilter();
   const { setMany, clear, selected } = useSelection();
@@ -29,7 +35,7 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
       <div className="flex items-center gap-1">
         <input
           className={`${inputClass} w-72 ${error ? "border-rose-500" : ""}`}
-          placeholder={`${f.regex ? "정규식 검색" : "검색"}${f.scope === "path" ? " (예: Font Size)" : ""}`}
+          placeholder={`${f.regex ? "정규식 검색" : "검색"}${SCOPE_HINTS[f.scope] ?? ""}`}
           value={f.query}
           onChange={(e) => f.set({ query: e.target.value })}
           title={error}
@@ -47,6 +53,9 @@ export function FilterBar({ filtered, total, error }: { filtered: Entry[]; total
         <option value="original">원문</option>
         <option value="translation">번역문</option>
         <option value="path">경로</option>
+        <option value="context" title="DB 필드 이름, 화자, 그룹 이름 (맵·이벤트·DB 타입/데이터)">
+          맥락
+        </option>
       </select>
 
       <div className="flex overflow-hidden rounded border border-zinc-700">

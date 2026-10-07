@@ -3,12 +3,13 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { basename, dirname, join } from "@tauri-apps/api/path";
 import { exportProject } from "../../api/project";
 import { useProject } from "../../stores/projectStore";
-import { isRiskyKind, type ExportReport } from "../../types";
+import { isRiskyEntry, isWolf, type ExportReport } from "../../types";
 import { Button, Dialog, Field, inputClass } from "../ui";
 
 /** 원본 게임 폴더를 통째로 복사한 뒤 번역문을 적용해 새 폴더로 저장한다. (옵션: 번역된 파일만) */
 export function SaveAsDialog({ onClose }: { onClose: () => void }) {
   const project = useProject((s) => s.project)!;
+  const wolf = isWolf(project.engine);
   const [parent, setParent] = useState("");
   const [name, setName] = useState("");
   const [translatedOnly, setTranslatedOnly] = useState(false);
@@ -18,8 +19,8 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
   const pluginCount = useMemo(() => {
     const { translations, entryById } = useProject.getState();
     return Object.keys(translations).filter((id) => {
-      const kind = entryById.get(id)?.kind;
-      return kind !== undefined && isRiskyKind(kind);
+      const entry = entryById.get(id);
+      return entry !== undefined && isRiskyEntry(entry);
     }).length;
   }, []);
 
@@ -41,7 +42,7 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
     try {
       const dest = await join(parent, name.trim());
       const s = useProject.getState();
-      setReport(await exportProject(project.root, dest, s.exportMap(), translatedOnly, s.options.localePairs));
+      setReport(await exportProject(project.root, dest, s.exportMap(), translatedOnly, s.options.localePairs, s.options.textRules));
     } catch (e) {
       setError(String(e));
     } finally {
@@ -76,6 +77,12 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
             번역 적용: {report.filesPatched}개 파일, {report.stringsApplied.toLocaleString()}개 문자열
           </p>
           {report.imagesApplied > 0 && <p>번역 이미지: {report.imagesApplied.toLocaleString()}개 파일</p>}
+          {report.archivesSkipped > 0 && (
+            <p className="text-zinc-400">
+              풀린 폴더가 있는 .wolf 아카이브 {report.archivesSkipped}개는 복사하지 않았습니다 (아카이브가 있으면 번역한 파일
+              대신 아카이브가 읽힙니다).
+            </p>
+          )}
           {report.skipped.length > 0 && (
             <details className="text-amber-400">
               <summary>적용하지 못한 항목 {report.skipped.length}개</summary>
@@ -102,9 +109,23 @@ export function SaveAsDialog({ onClose }: { onClose: () => void }) {
           </label>
           {pluginCount > 0 && (
             <p className="mb-3 rounded border border-amber-600/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
-              ⚠ 플러그인·JSON 데이터 번역 {pluginCount.toLocaleString()}개가 적용됩니다. 저장한 뒤 게임을 실행해 정상적으로
-              동작하는지 꼭 확인하세요.
+              ⚠ 위험 항목(플러그인·JSON 데이터·문자열 인수·식별자 의심) 번역 {pluginCount.toLocaleString()}개가 적용됩니다.
+              저장한 뒤 게임을 실행해 정상적으로 동작하는지 꼭 확인하세요.
             </p>
+          )}
+          {wolf && (
+            <ul className="mb-3 list-disc space-y-1 rounded border border-zinc-700 bg-zinc-900/60 py-2 pr-3 pl-7 text-xs text-zinc-400">
+              <li>
+                .wolf 아카이브가 함께 있으면 게임이 아카이브를 먼저 읽습니다. 전체 복사할 때는 풀린 폴더가 있는 아카이브를 빼고
+                복사하고, 번역된 파일만 내보낼 때는 게임 폴더에 덮어쓴 뒤 해당 아카이브를 직접 지우거나 옮겨 주세요.
+              </li>
+              {project.engine === "wolf2" && (
+                <li className="text-amber-300">
+                  WOLF RPG 2.x는 Shift-JIS만 쓸 수 있어 한글 등 Shift-JIS에 없는 문자가 든 번역은 적용되지 않습니다
+                  (적용하지 못한 항목으로 표시됨).
+                </li>
+              )}
+            </ul>
           )}
           <Field label="저장할 위치">
             <div className="flex gap-2">

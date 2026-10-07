@@ -112,6 +112,7 @@ pub fn parse_response(content: &str) -> Option<HashMap<usize, String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::codes::Dialect;
 
     #[test]
     fn parses_fenced_response() {
@@ -128,7 +129,7 @@ mod tests {
         let term = |s: &str, t: &str, n: Option<&str>| GlossaryTerm { source: s.into(), target: t.into(), note: n.map(Into::into) };
         let glossary = Glossary::new(vec![term("ハロルド", "해롤드", Some("남성")), term("魔王", "마왕", None), term("村人", "마을 사람", None)]);
         let job = |text: &str, context: Option<&str>| {
-            Job::new(AiItem { id: String::new(), text: text.into(), group: "g".into(), context: context.map(Into::into), merge: false })
+            Job::new(AiItem { id: String::new(), text: text.into(), group: "g".into(), context: context.map(Into::into), merge: false }, Dialect::Rpgm)
         };
 
         let msg = user_message(&[job("ハロルドさん！", Some("村人"))], &glossary);

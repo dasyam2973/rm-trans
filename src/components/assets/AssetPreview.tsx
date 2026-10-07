@@ -20,6 +20,7 @@ const MIME: Record<string, string> = {
   wav: "audio/wav",
   webm: "video/webm",
   mp4: "video/mp4",
+  ogv: "video/ogg",
 };
 
 /** 동영상은 통째로 메모리에 올리므로 너무 크면 미리보지 않는다 */
@@ -69,7 +70,7 @@ export function AssetPreview() {
   );
   const translated = useBlobUrl(
     root && file && hasReplacement ? () => readAssetReplacement(root, file.path) : null,
-    "image/png",
+    mime,
     [root, file, hasReplacement, replacedVersion],
   );
 
@@ -112,7 +113,9 @@ export function AssetPreview() {
 
   const pickReplacement = () =>
     run(async () => {
-      const source = await open({ title: "번역 이미지 선택", filters: [{ name: "PNG", extensions: ["png"] }] });
+      // 게임은 확장자까지 포함한 이름으로 찾으므로 원본과 같은 형식만 받는다
+      const extensions = ext === "png" ? ["png"] : ["jpg", "jpeg"];
+      const source = await open({ title: "번역 이미지 선택", filters: [{ name: ext.toUpperCase(), extensions }] });
       if (typeof source !== "string") return;
       const plain = await setAssetReplacement(root, file.path, source);
       useAssets.getState().setReplaced(plain, true);
@@ -216,7 +219,7 @@ export function AssetPreview() {
               variant="primary"
               onClick={pickReplacement}
               disabled={busy}
-              title="편집한 PNG를 이 이미지의 번역본으로 등록합니다. '다른 이름으로 저장' 시 원본과 같은 방식으로 암호화되어 적용됩니다."
+              title="편집한 이미지(원본과 같은 형식)를 이 이미지의 번역본으로 등록합니다. '다른 이름으로 저장' 시 원본 경로에 적용되고, 원본이 암호화돼 있으면 같은 방식으로 암호화됩니다."
             >
               {hasReplacement ? "번역 이미지 교체…" : "번역 이미지 지정…"}
             </Button>

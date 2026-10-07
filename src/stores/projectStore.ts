@@ -48,7 +48,7 @@ interface ProjectState {
   exportMap: () => Record<string, string>;
 }
 
-const DEFAULT_OPTIONS: ProjectOptions = { includePlugins: false, detailed: false, localePairs: [] };
+const DEFAULT_OPTIONS: ProjectOptions = { includePlugins: false, detailed: false, localePairs: [], textRules: [] };
 
 /** 저장된 항목을 현재 아이템 목록 기준으로 번역문/상태/고아 항목으로 나눈다.
  * 저장된 항목이 없으면 언어 파일에 이미 있던 값(initial)을 번역으로 쓴다. */

@@ -123,8 +123,11 @@ export const folderOf = (path: string) => path.slice(0, Math.max(0, path.lastInd
 
 export const fileNameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 
-/** 번역 이미지를 등록할 수 있는 리소스인지 (PNG 이미지) */
-export const isReplaceable = (file: AssetFile) => file.plainPath.toLowerCase().endsWith(".png");
+/** 번역 이미지를 등록할 수 있는 리소스인지 (PNG, 또는 암호화되지 않은 JPG. 백엔드 set_replacement와 같은 규칙) */
+export const isReplaceable = (file: AssetFile) => {
+  const p = file.plainPath.toLowerCase();
+  return p.endsWith(".png") || (!file.encrypted && (p.endsWith(".jpg") || p.endsWith(".jpeg")));
+};
 
 export function filterAssets(
   files: AssetFile[],

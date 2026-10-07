@@ -5,10 +5,11 @@ use serde::Serialize;
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter};
 
+use crate::engine::{self, Layout};
 use crate::error::{Error, Result};
 use crate::rpgm::assets::{self, AssetScan, KeyRing, SchemeKey};
 use crate::rpgm::crypto::Scheme;
-use crate::rpgm::detect;
+use crate::wolf;
 
 use super::export::prepare_dest;
 
@@ -32,7 +33,10 @@ struct Progress {
 
 #[tauri::command]
 pub async fn scan_assets(root: String) -> Result<AssetScan> {
-    tauri::async_runtime::spawn_blocking(move || assets::scan(&detect::detect(&PathBuf::from(root))?))
+    tauri::async_runtime::spawn_blocking(move || match engine::detect(&PathBuf::from(root))? {
+        Layout::Rpgm(l) => assets::scan(&l),
+        Layout::Wolf(l) => wolf::assets::scan(&l),
+    })
         .await
         .expect("scan_assets 작업 패닉")
 }
@@ -145,6 +149,7 @@ fn export(
 mod tests {
     use super::*;
     use crate::rpgm::assets::tests::{keys_of, make_game, PNG};
+    use crate::rpgm::detect;
 
     #[test]
     fn exports_decrypted_copies() {

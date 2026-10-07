@@ -38,6 +38,29 @@ pub struct ProjectOptions {
     /// 번역 플러그인의 언어 파일 쌍
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub locale_pairs: Vec<LocalePair>,
+    /// 게임 자체 스크립트 등 텍스트 파일 추출 규칙 (엔진과 무관)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub text_rules: Vec<TextRule>,
+}
+
+/// 텍스트 파일 추출 규칙 (`textfile.rs`).
+/// 지정한 접두로 시작하지 않는 줄이 이어진 묶음을 문장 하나로, 지정한 명령의 인자를 문장 하나로 추출한다.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TextRule {
+    /// 게임 루트 기준 파일 패턴 ('/' 구분, `*` `**` `?`). 예: `Data/Text_Script/**/*.txt`
+    pub pattern: String,
+    /// 이 문자열로 시작하는 줄은 명령·주석이라 번역하지 않는다. 예: `@`, `#`
+    pub skip_prefixes: Vec<String>,
+    /// 인자에 표시 문장이 들어 있는 명령
+    pub arg_commands: Vec<ArgCommand>,
+}
+
+/// `command`로 시작하는 줄을 공백으로 나눴을 때 `arg`번째(명령 자신이 0) 토큰이 표시 문장이다
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArgCommand {
+    pub command: String,
+    pub arg: usize,
 }
 
 /// 번역 플러그인의 언어별 JSON 파일 쌍. 경로는 게임 루트 기준 ('/' 구분).
